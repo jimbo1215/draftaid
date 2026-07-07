@@ -10,6 +10,8 @@ Sources (all free, no API key):
 
 import json
 import re
+import xml.etree.ElementTree as ET
+from email.utils import parsedate_to_datetime
 
 import numpy as np
 import pandas as pd
@@ -127,7 +129,8 @@ def fetch_sleeper_players() -> pd.DataFrame:
         pos = p.get("position")
         if pos == "DEF":
             rows.append({"sleeper_id": pid, "key": f"dst{normalize_team(pid).lower()}",
-                         "injury": "", "injury_note": ""})
+                         "injury": "", "injury_note": "", "age": None,
+                         "years_exp": None, "college": ""})
             continue
         if pos not in {"QB", "RB", "WR", "TE", "K"} or p.get("status") not in {"Active", "Injured Reserve"}:
             continue
@@ -137,6 +140,9 @@ def fetch_sleeper_players() -> pd.DataFrame:
             "key": f"{name_key}|{pos}",
             "injury": p.get("injury_status") or "",
             "injury_note": p.get("injury_body_part") or "",
+            "age": p.get("age"),
+            "years_exp": p.get("years_exp"),
+            "college": p.get("college") or "",
         })
     return pd.DataFrame(rows).drop_duplicates(subset="key", keep="first")
 
@@ -148,6 +154,41 @@ def fetch_sleeper_trending(limit: int = 60) -> dict:
                         params={"lookback_hours": 24, "limit": limit}, timeout=30)
     resp.raise_for_status()
     return {item["player_id"]: item["count"] for item in resp.json()}
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_player_news(player_name: str, limit: int = 3) -> list[dict]:
+    """Latest headlines for a player from the Google News RSS feed.
+    Returns [{title, link, source, when}]; empty list on any failure."""
+    try:
+        url = ("https://news.google.com/rss/search?q="
+               + requests.utils.quote(f"{player_name} fantasy football")
+               + "&hl=en-US&gl=US&ceid=US:en")
+        resp = requests.get(url, headers=UA_HEADERS, timeout=8)
+        resp.raise_for_status()
+        items = []
+        for item in ET.fromstring(resp.content).iter("item"):
+            title = item.findtext("title") or ""
+            source = ""
+            if " - " in title:  # Google News appends the outlet after a dash
+                title, source = title.rsplit(" - ", 1)
+            when = ""
+            pub = item.findtext("pubDate")
+            if pub:
+                try:
+                    delta = pd.Timestamp.now(tz="UTC") - parsedate_to_datetime(pub)
+                    days = delta.days
+                    when = (f"{days}d ago" if days >= 1
+                            else f"{max(1, delta.seconds // 3600)}h ago")
+                except (ValueError, TypeError):
+                    pass
+            items.append({"title": title, "link": item.findtext("link") or "",
+                          "source": source, "when": when})
+            if len(items) >= limit:
+                break
+        return items
+    except Exception:
+        return []
 
 
 def parse_rankings_csv(file) -> pd.DataFrame:

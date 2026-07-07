@@ -14,34 +14,43 @@ import pandas as pd
 import streamlit as st
 
 import draft_logic as dl
-from data_sources import build_board, parse_rankings_csv
+from data_sources import build_board, fetch_player_news, parse_rankings_csv
 
 st.set_page_config(page_title="DraftAid", page_icon="🏈", layout="wide")
 
 AUTOSAVE = Path(__file__).parent / "draft_autosave.json"
 POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
-DEFAULT_TEAM_NAMES = ("Buddy\nGiuseppe\nScab\nRandino\nNuzzo\nGeiger\n"
-                      "Bullock\nJimmy (You)\nClaire\nDro\nLamart\nLogik")
+DEFAULT_TEAMS = ["Buddy", "Giuseppe", "Scab", "Randino", "Nuzzo", "Geiger",
+                 "Bullock", "Jimmy (You)", "Claire", "Dro", "Lamart", "Logik"]
 
 # ---------------------------------------------------------------- state
 
 if "picks" not in st.session_state:
-    st.session_state.picks = []          # [{key, player, pos, team, bye, mine}]
+    st.session_state.picks = []          # [{key, player, pos, team, bye, mine, overall}]
 if "phantom" not in st.session_state:
     st.session_state.phantom = 0         # unlogged picks (counter resync)
 if "csv_ranks" not in st.session_state:
     st.session_state.csv_ranks = None
 if "csv_name" not in st.session_state:
     st.session_state.csv_name = ""
+if "board_nonce" not in st.session_state:
+    st.session_state.board_nonce = 0     # bumping it resets the board table selection
+if "league_nonce" not in st.session_state:
+    st.session_state.league_nonce = 0    # bumping it re-seeds the league editor
+
+
+def state_payload() -> dict:
+    return {
+        "picks": st.session_state.picks,
+        "phantom": st.session_state.phantom,
+        "league": st.session_state.get("_league", {}),
+        "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
 
 
 def autosave():
     try:
-        AUTOSAVE.write_text(json.dumps({
-            "picks": st.session_state.picks,
-            "phantom": st.session_state.phantom,
-            "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        }))
+        AUTOSAVE.write_text(json.dumps(state_payload()))
     except OSError:
         pass
 
@@ -49,6 +58,13 @@ def autosave():
 def load_state(payload: dict):
     st.session_state.picks = payload.get("picks", [])
     st.session_state.phantom = payload.get("phantom", 0)
+    league = payload.get("league") or {}
+    if league.get("team_names"):
+        st.session_state.league_seed = league["team_names"]
+        if league.get("slot"):
+            st.session_state.me_seed = league["team_names"][league["slot"] - 1]
+        st.session_state.league_nonce += 1
+    st.session_state.board_nonce += 1
 
 
 # ---------------------------------------------------------------- sidebar
@@ -56,12 +72,37 @@ def load_state(payload: dict):
 with st.sidebar:
     st.title("🏈 DraftAid")
 
-    with st.expander("League settings", expanded=False):
-        teams = st.number_input("Teams", 4, 20, 12)
-        slot = st.number_input("Your draft slot", 1, int(teams), 8)
-        rounds = st.number_input("Rounds", 8, 25, 14)
-        names_raw = st.text_area("Team names (draft order, one per line)",
-                                 DEFAULT_TEAM_NAMES, height=170)
+    with st.expander("League setup", expanded=False):
+        tc1, tc2 = st.columns(2)
+        teams = tc1.number_input("Teams", 4, 20, 12)
+        rounds = tc2.number_input("Rounds", 8, 25, 14)
+
+        st.caption("Edit names for this year's league. To change the draft order, "
+                   "renumber the **Pick** column — the board sorts by it.")
+        seed = list(st.session_state.get("league_seed") or DEFAULT_TEAMS)
+        seed = (seed + [f"Team {i}" for i in range(len(seed) + 1, int(teams) + 1)])[:int(teams)]
+        edited = st.data_editor(
+            pd.DataFrame({"Pick": range(1, int(teams) + 1), "Team": seed}),
+            key=f"league_editor_{int(teams)}_{st.session_state.league_nonce}",
+            hide_index=True, width="stretch", num_rows="fixed",
+            column_config={
+                "Pick": st.column_config.NumberColumn("Pick", min_value=1,
+                                                      max_value=int(teams), step=1),
+                "Team": st.column_config.TextColumn("Team", required=True),
+            })
+        ordered = edited.sort_values("Pick", kind="stable")["Team"].tolist()
+        team_names = [(str(n).strip() or f"Team {i + 1}") for i, n in enumerate(ordered)]
+
+        me_default = st.session_state.get("me_seed") or next(
+            (n for n in team_names if "(you)" in n.lower()), team_names[0])
+        me = st.selectbox("Which team is you?", team_names,
+                          index=team_names.index(me_default) if me_default in team_names else 0,
+                          key=f"me_team_{int(teams)}_{st.session_state.league_nonce}")
+        slot = team_names.index(me) + 1
+        st.caption(f"You pick {slot}{'st' if slot == 1 else 'nd' if slot == 2 else 'rd' if slot == 3 else 'th'} "
+                   f"in odd rounds.")
+
+        st.markdown("**Starting lineup**")
         c1, c2, c3 = st.columns(3)
         spots = {
             "QB": c1.number_input("QB", 0, 3, 1),
@@ -72,9 +113,7 @@ with st.sidebar:
             "K": c3.number_input("K", 0, 2, 1),
             "DST": c1.number_input("DST", 0, 2, 1),
         }
-    team_names = [n.strip() for n in names_raw.replace(",", "\n").splitlines() if n.strip()]
-    team_names = (team_names
-                  + [f"Team {i}" for i in range(len(team_names) + 1, int(teams) + 1)])[:int(teams)]
+    st.session_state._league = {"team_names": team_names, "slot": int(slot)}
 
     with st.expander("Ranking sources & weights", expanded=False):
         st.caption("How much each source counts toward the blended rank.")
@@ -100,7 +139,7 @@ with st.sidebar:
     st.divider()
     st.download_button(
         "💾 Export draft state",
-        json.dumps({"picks": st.session_state.picks, "phantom": st.session_state.phantom}),
+        json.dumps(state_payload()),
         file_name="draft_state.json", mime="application/json",
         width="stretch",
     )
@@ -115,6 +154,7 @@ with st.sidebar:
         if st.button("Yes, reset everything", type="primary"):
             st.session_state.picks = []
             st.session_state.phantom = 0
+            st.session_state.board_nonce += 1
             AUTOSAVE.unlink(missing_ok=True)
             st.rerun()
 
@@ -150,18 +190,26 @@ taken_by_key = {p["key"]: ("Me" if p["mine"] else "Taken") for p in picks}
 my_players = pd.DataFrame([p for p in picks if p["mine"]],
                           columns=["key", "player", "pos", "team", "bye", "mine"])
 
+# Who took each drafted player, e.g. "Randino 3.02".
+status_by_key = {}
+for i, p in enumerate(picks):
+    o = p.get("overall", i + 1)
+    r_, k_ = dl.round_and_pick(o, int(teams))
+    status_by_key[p["key"]] = (
+        f"{team_names[dl.snake_team_for_pick(o, int(teams)) - 1]} {r_}.{k_:02d}")
+
 current_overall = len(picks) + st.session_state.phantom + 1
 rnd, pick_in_rnd = dl.round_and_pick(current_overall, int(teams))
 upcoming = dl.next_my_picks(current_overall, int(slot), int(teams), int(rounds))
 on_clock = bool(upcoming) and upcoming[0] == current_overall
 next_turn = (upcoming[1] if on_clock else upcoming[0]) if len(upcoming) > (1 if on_clock else 0) else None
 
-available = board[~board["key"].isin(drafted_keys)].copy()
 if next_turn is not None:
-    available["lasts"] = [dl.survival_probability(a, s, next_turn)
-                          for a, s in zip(available["adp"], available["adp_std"])]
+    board["lasts"] = [dl.survival_probability(a, s, next_turn)
+                      for a, s in zip(board["adp"], board["adp_std"])]
 else:
-    available["lasts"] = float("nan")
+    board["lasts"] = float("nan")
+available = board[~board["key"].isin(drafted_keys)]
 
 # --------------------------------------------------------- pick callbacks
 
@@ -172,6 +220,7 @@ def _apply_pick(row: pd.Series, mine: bool):
         "team": row["team"], "bye": int(row["bye"]), "mine": mine,
         "overall": len(st.session_state.picks) + st.session_state.phantom + 1,
     })
+    st.session_state.board_nonce += 1
     autosave()
 
 
@@ -183,21 +232,39 @@ def record_quick(mine: bool):
         st.session_state.quick_pick = None
 
 
-def record_selected(mine: bool):
-    table_key = st.session_state.get("_table_key", "")
-    sel = st.session_state.get(table_key)
-    shown = st.session_state.get("_shown_rows")
-    if sel is None or shown is None:
-        return
-    for r in sel["selection"]["rows"]:
-        if r < len(shown):
-            _apply_pick(shown.iloc[r], mine)
+def request_card():
+    """Open the player card for whoever is typed in the quick-entry box."""
+    label = st.session_state.get("quick_pick")
+    options = st.session_state.get("_quick_map", {})
+    if label and label in options:
+        st.session_state.card_request = options[label]["key"]
 
 
 def undo_pick():
     if st.session_state.picks:
         st.session_state.picks.pop()
+        st.session_state.board_nonce += 1
         autosave()
+
+
+def remove_pick_by_key(key: str):
+    idx = next((i for i, p in enumerate(st.session_state.picks) if p["key"] == key), None)
+    if idx is None:
+        return
+    st.session_state.picks.pop(idx)
+    for later in st.session_state.picks[idx:]:
+        if "overall" in later:
+            later["overall"] -= 1
+    st.session_state.board_nonce += 1
+    autosave()
+
+
+def _img_url(r) -> str | None:
+    if r["pos"] == "DST":
+        return f"https://sleepercdn.com/images/team_logos/nfl/{str(r['team']).lower()}.png"
+    sid = r.get("sleeper_id")
+    return (f"https://sleepercdn.com/content/nfl/players/thumb/{sid}.jpg"
+            if pd.notna(sid) else None)
 
 
 def team_roster(team_slot: int) -> list[dict]:
@@ -226,6 +293,80 @@ def sim_picks(to_my_turn: bool):
         _apply_pick(choice, False)
         if not to_my_turn:
             break
+
+
+# ---------------------------------------------------------------- player card
+
+@st.dialog("Player card", width="large")
+def player_card(row: pd.Series):
+    c_img, c_head = st.columns([1, 5])
+    img = _img_url(row)
+    if img:
+        c_img.image(img, width=90)
+    with c_head:
+        st.markdown(f"### {row['player']}")
+        bits = [str(row["pos_rank"]), str(row["team"]), f"Bye {row['bye']}"]
+        if pd.notna(row.get("age")):
+            bits.append(f"Age {int(row['age'])}")
+        if pd.notna(row.get("years_exp")):
+            exp = int(row["years_exp"])
+            bits.append("Rookie" if exp == 0 else f"Year {exp + 1}")
+        if isinstance(row.get("college"), str) and row["college"]:
+            bits.append(row["college"])
+        st.caption(" · ".join(bits))
+        flags = []
+        if row.get("injury"):
+            note = f" ({row['injury_note']})" if isinstance(row.get("injury_note"), str) and row["injury_note"] else ""
+            flags.append(f"🩹 **{row['injury']}**{note}")
+        if row.get("trending", 0) > 0:
+            flags.append(f"🔥 {int(row['trending']):,} Sleeper adds in 24h")
+        if flags:
+            st.markdown(" · ".join(flags))
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Board rank", f"#{int(row['rank'])}", f"Tier {int(row['tier'])}" if row["tier"] else None,
+              delta_color="off")
+    m2.metric("Experts (ECR)", f"#{int(row['ecr'])}", f"{int(row['ecr_best'])}–{int(row['ecr_worst'])}",
+              delta_color="off")
+    adp_pick = row["adp_pick"] if isinstance(row["adp_pick"], str) and row["adp_pick"] else "—"
+    m3.metric("ADP", adp_pick,
+              f"{row['adp']:.1f} overall" if pd.notna(row["adp"]) else None, delta_color="off")
+    m4.metric("Value vs ADP", f"{row['value']:+.1f}" if pd.notna(row["value"]) else "—",
+              "market lets him fall" if pd.notna(row["value"]) and row["value"] >= 5 else None,
+              delta_color="off")
+    lasts = row.get("lasts")
+    m5.metric("Lasts to your turn", f"{lasts:.0%}" if pd.notna(lasts) else "—",
+              f"pick #{next_turn}" if next_turn else None, delta_color="off")
+
+    already = status_by_key.get(row["key"])
+    if already:
+        st.warning(f"Already drafted: **{already}**")
+        if st.button("↩ Un-draft (this was logged by mistake)", width="stretch"):
+            remove_pick_by_key(row["key"])
+            st.rerun()
+    else:
+        b1, b2 = st.columns(2)
+        if b1.button("✅ Draft to MY team", type="primary", width="stretch"):
+            _apply_pick(row, True)
+            st.rerun()
+        if b2.button(f"🚫 Taken by {on_clock_name}", width="stretch"):
+            _apply_pick(row, False)
+            st.rerun()
+
+    with st.spinner("Grabbing latest headlines…"):
+        news = fetch_player_news(row["player"])
+    if news:
+        st.markdown("##### 📰 Latest news")
+        for n in news:
+            extras = " · ".join(x for x in (n["source"], n["when"]) if x)
+            st.markdown(f"- [{n['title']}]({n['link']})"
+                        + (f" <span style='opacity:.6'>({extras})</span>" if extras else ""),
+                        unsafe_allow_html=True)
+    l1, l2, _ = st.columns([1, 1, 2])
+    l1.link_button("More news", "https://news.google.com/search?q="
+                   + quote(f"{row['player']} fantasy"), width="stretch")
+    l2.link_button("RotoWire", "https://www.rotowire.com/football/search.php?search="
+                   + quote(str(row["player"])), width="stretch")
 
 
 # ---------------------------------------------------------------- header
@@ -263,6 +404,16 @@ with h4:
 if on_clock:
     st.success("**You're on the clock!** Suggestions below ⬇")
 
+if picks:
+    ticker = []
+    for i, p in list(enumerate(picks))[-6:][::-1]:
+        o = p.get("overall", i + 1)
+        r_, k_ = dl.round_and_pick(o, int(teams))
+        who = team_names[dl.snake_team_for_pick(o, int(teams)) - 1]
+        ticker.append(f"{r_}.{k_:02d} {who}: **{p['player']}**"
+                      + (" 🟢" if p["mine"] else ""))
+    st.caption("🕘 " + " &nbsp;·&nbsp; ".join(ticker), unsafe_allow_html=True)
+
 tab_board, tab_tiers, tab_team, tab_league, tab_log, tab_full = st.tabs(
     ["🎯 Draft Board", "📊 Tiers", "🧑‍🤝‍🧑 My Team", "🏟 League", "📜 Pick Log",
      "📖 Full Rankings"])
@@ -290,21 +441,18 @@ with tab_board:
         for _, r in available.iterrows()
     }
     st.session_state._quick_map = quick_map
-    qc1, qc2, qc3, qc4 = st.columns([4, 1.2, 1.2, 1])
+    qc1, qc2, qc3, qc4, qc5 = st.columns([3.6, 1, 1.2, 1.2, 1])
     qc1.selectbox("Type a name…", quick_map.keys(), index=None, key="quick_pick",
                   placeholder="Type a player name…", label_visibility="collapsed")
-    qc2.button("🚫 Taken", key="btn_taken", on_click=record_quick, args=(False,),
+    qc2.button("ℹ️ Card", key="btn_card", on_click=request_card, width="stretch",
+               help="Open the player card: news, ranks, and draft buttons")
+    qc3.button("🚫 Taken", key="btn_taken", on_click=record_quick, args=(False,),
                width="stretch",
                help="Someone else drafted this player")
-    qc3.button("✅ My pick", key="btn_mine", type="primary", on_click=record_quick, args=(True,),
+    qc4.button("✅ My pick", key="btn_mine", type="primary", on_click=record_quick, args=(True,),
                width="stretch")
-    qc4.button("↩ Undo", key="btn_undo", on_click=undo_pick, width="stretch",
+    qc5.button("↩ Undo", key="btn_undo", on_click=undo_pick, width="stretch",
                disabled=not picks, help="Remove the last logged pick")
-
-    if picks:
-        last = ", ".join(f"{p['player']}{' (you)' if p['mine'] else ''}"
-                         for p in picks[-4:][::-1])
-        st.caption(f"Recent: {last}")
 
     with st.expander("🤖 Practice mode (mock draft)"):
         st.caption("Simulates the other teams' picks so you can rehearse before draft day. "
@@ -316,50 +464,58 @@ with tab_board:
                    width="stretch", disabled=on_clock)
 
     # --- filters + table
-    fc1, fc2 = st.columns([2, 3])
+    fc1, fc2, fc3 = st.columns([2, 2.6, 1.2])
     pos_filter = fc1.multiselect("Position", POSITIONS, default=[],
                                  placeholder="All positions")
     search = fc2.text_input("Search", placeholder="Filter by player or team…")
+    show_drafted = fc3.toggle("Show drafted", value=False,
+                              help="Keep drafted players on the board, struck through, "
+                                   "with who took them")
 
-    shown = available
+    # Reset the row selection whenever the view changes so a stale selection
+    # can't point at a different player.
+    view_sig = (tuple(sorted(pos_filter)), search.strip().lower(), bool(show_drafted))
+    if st.session_state.get("_view_sig") != view_sig:
+        st.session_state._view_sig = view_sig
+        st.session_state.board_nonce += 1
+
+    shown = board if show_drafted else available
     if pos_filter:
         shown = shown[shown["pos"].isin(pos_filter)]
     if search:
         q = search.strip().lower()
         shown = shown[shown["player"].str.lower().str.contains(q, regex=False)
                       | shown["team"].str.lower().str.contains(q, regex=False)]
-    shown = shown.head(200).reset_index(drop=True)
-
-    def _img_url(r):
-        if r["pos"] == "DST":
-            return f"https://sleepercdn.com/images/team_logos/nfl/{str(r['team']).lower()}.png"
-        sid = r.get("sleeper_id")
-        return (f"https://sleepercdn.com/content/nfl/players/thumb/{sid}.jpg"
-                if pd.notna(sid) else None)
-
-    shown = shown.assign(img=shown.apply(_img_url, axis=1))
-    st.session_state._shown_rows = shown
+    shown = shown.head(250).reset_index(drop=True)
+    shown = shown.assign(img=shown.apply(_img_url, axis=1),
+                         status=shown["key"].map(status_by_key).fillna(""))
 
     display_cols = ["img", "rank", "player", "pos_rank", "team", "bye", "tier",
                     "ecr", "adp", "value", "lasts", "injury", "trending"]
+    if show_drafted:
+        display_cols.insert(3, "status")
     disp = shown[display_cols]
 
-    def _tier_row_style(row):
+    def _row_style(row):
+        if shown.loc[row.name, "status"]:
+            return ["color: #8a8a8a; text-decoration: line-through"] * len(row)
         color = dl.tier_color(shown.loc[row.name, "tier"])
         return [f"background-color: {color}66" if color else ""] * len(row)
 
-    styled = disp.style.apply(_tier_row_style, axis=1).format(
+    styled = disp.style.apply(_row_style, axis=1).format(
         {"adp": "{:.1f}", "value": "{:+.1f}", "ecr": "{:.0f}"}, na_rep="—")
 
-    table_key = f"board_{len(picks)}_{len(shown)}"
-    st.session_state._table_key = table_key
+    st.caption("👆 Tap the ⚪ at the left edge of a row to open the player card — news, "
+               "ranks, and draft buttons. (Or type a name above and hit ℹ️ Card.)")
     event = st.dataframe(
-        styled, key=table_key, on_select="rerun", selection_mode="single-row",
+        styled, key=f"board_{st.session_state.board_nonce}",
+        on_select="rerun", selection_mode="single-row",
         width="stretch", height=560, hide_index=True,
         column_config={
             "img": st.column_config.ImageColumn(" ", width="small"),
             "rank": st.column_config.NumberColumn("#", width="small"),
             "player": st.column_config.TextColumn("Player", width="medium"),
+            "status": st.column_config.TextColumn("Drafted by", width="small"),
             "pos_rank": st.column_config.TextColumn("Pos", width="small"),
             "team": st.column_config.TextColumn("Team", width="small"),
             "bye": st.column_config.NumberColumn("Bye", width="small"),
@@ -378,18 +534,19 @@ with tab_board:
                 "🔥", width="small", help="Sleeper adds in the last 24h"),
         },
     )
-    if event.selection.rows:
+
+    # Open the player card: from the ℹ️ Card button, or by clicking a table row.
+    card_key = st.session_state.pop("card_request", None)
+    if card_key is not None:
+        match = board[board["key"] == card_key]
+        if len(match):
+            player_card(match.iloc[0])
+    elif event.selection.rows:
         sel_row = shown.iloc[event.selection.rows[0]]
-        sc1, sc2, sc3, sc4, sc5 = st.columns([2.6, 1.2, 1.2, 0.8, 0.9])
-        sc1.markdown(f"Selected: **{sel_row['player']}** ({sel_row['pos']} · {sel_row['team']})")
-        sc2.button("🚫 Taken ", on_click=record_selected, args=(False,),
-                   width="stretch", key="sel_taken")
-        sc3.button("✅ My pick ", type="primary", on_click=record_selected, args=(True,),
-                   width="stretch", key="sel_mine")
-        sc4.link_button("📰 News", "https://news.google.com/search?q="
-                        + quote(f"{sel_row['player']} fantasy"), width="stretch")
-        sc5.link_button("🧠 Roto", "https://www.rotowire.com/football/search.php?search="
-                        + quote(sel_row["player"]), width="stretch")
+        marker = (sel_row["key"], st.session_state.board_nonce)
+        if st.session_state.get("_card_marker") != marker:
+            st.session_state._card_marker = marker
+            player_card(sel_row)
 
 # ---------------------------------------------------------------- tiers
 
@@ -527,7 +684,7 @@ with tab_log:
 
 with tab_full:
     full = board.copy()
-    full["status"] = full["key"].map(taken_by_key).fillna("")
+    full["status"] = full["key"].map(status_by_key).fillna("")
     st.download_button("⬇ Download board as CSV",
                        full.drop(columns=["key", "sleeper_id"], errors="ignore")
                            .to_csv(index=False),
