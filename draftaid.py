@@ -507,7 +507,17 @@ with tab_board:
                       | shown["team"].str.lower().str.contains(q, regex=False)]
     shown = shown.head(40)
 
-    _STAT = "width:52px;text-align:right;opacity:.85;font-variant-numeric:tabular-nums"
+    def _cell(content, width: int, align: str = "left", extra: str = "") -> str:
+        # flex:none so fixed cells never shrink -- keeps every row and the
+        # header perfectly column-aligned regardless of window width.
+        return (f"<span style='width:{width}px;flex:none;text-align:{align};"
+                f"overflow:hidden;{extra}'>{content}</span>")
+
+    _COLS = [("#", 26, "right"), ("", 34, "left"), ("Pos", 42, "left"),
+             ("Team", 62, "left"), ("Bye", 44, "left"), ("Tier", 36, "left"),
+             ("ECR", 52, "right"), ("ADP", 52, "right"), ("Val", 52, "right"),
+             ("Lasts", 52, "right")]
+    _NAME = "flex:1 1 150px;min-width:150px;overflow:hidden;text-overflow:ellipsis"
 
     def _row_html(r, status: str) -> str:
         color = dl.tier_color(r["tier"])
@@ -516,8 +526,7 @@ with tab_board:
                      if r["tier"] else "")
         head = _img_url(r)
         head_img = (f"<img src='{head}' width='34' style='height:25px;object-fit:cover;"
-                    f"border-radius:4px;vertical-align:middle'>" if head else
-                    "<span style='width:34px;display:inline-block'></span>")
+                    f"border-radius:4px;vertical-align:middle'>" if head else "")
         name = f"<b>{r['player']}</b>"
         if status:
             name = (f"<s style='opacity:.5'>{r['player']}</s> "
@@ -527,56 +536,54 @@ with tab_board:
         fire = " 🔥" if r["trending"] > 500 else ""
         if pd.notna(r["value"]):
             vc = "#66bb6a" if r["value"] >= 3 else ("#ef5350" if r["value"] <= -3 else "#9e9e9e")
-            val = f"<span style='{_STAT};color:{vc}'>{r['value']:+.0f}</span>"
+            val_txt, val_extra = f"{r['value']:+.0f}", f"color:{vc}"
         else:
-            val = f"<span style='{_STAT}'>—</span>"
+            val_txt, val_extra = "—", "opacity:.5"
         lasts = f"{r['lasts']:.0%}" if pd.notna(r.get("lasts")) else "—"
         adp = f"{r['adp']:.0f}" if pd.notna(r["adp"]) else "—"
-        return (
-            "<div style='display:flex;align-items:center;gap:9px;font-size:14px;"
-            "white-space:nowrap;overflow:hidden'>"
-            f"<span style='width:26px;text-align:right;opacity:.55'>{int(r['rank'])}</span>"
-            f"{head_img}"
-            f"<span style='flex:1;min-width:150px;overflow:hidden;text-overflow:ellipsis'>"
-            f"{name}{inj}{fire}</span>"
-            f"<span style='width:42px;opacity:.85'>{r['pos_rank']}</span>"
-            f"<span style='width:62px'><img src='{team_logo(r['team'])}' width='18' "
-            f"style='vertical-align:-4px'> {r['team']}</span>"
-            f"<span style='width:44px;opacity:.65'>bye {r['bye']}</span>"
-            f"<span style='width:36px'>{tier_chip}</span>"
-            f"<span style='{_STAT}'>E{int(r['ecr'])}</span>"
-            f"<span style='{_STAT}'>A{adp}</span>"
-            f"{val}"
-            f"<span style='{_STAT}'>{lasts}</span>"
-            "</div>")
+        num = "font-variant-numeric:tabular-nums;opacity:.85"
+        cells = [
+            _cell(str(int(r["rank"])), 26, "right", "opacity:.55"),
+            _cell(head_img, 34),
+            f"<span style='{_NAME}'>{name}{inj}{fire}</span>",
+            _cell(str(r["pos_rank"]), 42, "left", "opacity:.85"),
+            _cell(f"<img src='{team_logo(r['team'])}' width='18' "
+                  f"style='vertical-align:-4px'> {r['team']}", 62),
+            _cell(f"bye {r['bye']}", 44, "left", "opacity:.65"),
+            _cell(tier_chip, 36),
+            _cell(f"E{int(r['ecr'])}", 52, "right", num),
+            _cell(f"A{adp}", 52, "right", num),
+            _cell(val_txt, 52, "right", f"font-variant-numeric:tabular-nums;{val_extra}"),
+            _cell(lasts, 52, "right", num),
+        ]
+        return ("<div style='display:flex;align-items:center;gap:9px;font-size:14px;"
+                "white-space:nowrap;overflow:hidden'>" + "".join(cells) + "</div>")
 
     st.caption("ℹ️ = player card + news · 🚫 = taken by the team on the clock · ✅ = my pick  |  "
                "Columns: E = expert rank, A = ADP, ± = value vs ADP, % = odds he lasts to your turn")
-    hdr = ("<div style='display:flex;gap:9px;font-size:11px;opacity:.6;padding:0 0 2px 0'>"
-           "<span style='width:26px;text-align:right'>#</span>"
-           "<span style='width:34px'></span>"
-           "<span style='flex:1;min-width:150px'>Player</span>"
-           "<span style='width:42px'>Pos</span><span style='width:62px'>Team</span>"
-           "<span style='width:44px'>Bye</span><span style='width:36px'>Tier</span>"
-           "<span style='width:52px;text-align:right'>ECR</span>"
-           "<span style='width:52px;text-align:right'>ADP</span>"
-           "<span style='width:52px;text-align:right'>Val</span>"
-           "<span style='width:52px;text-align:right'>Lasts</span></div>")
+    hdr_cells = [_cell(label, w, align) for label, w, align in _COLS[:2]]
+    hdr_cells.append(f"<span style='{_NAME}'>Player</span>")
+    hdr_cells += [_cell(label, w, align) for label, w, align in _COLS[2:]]
+    hdr = ("<div style='display:flex;gap:9px;font-size:11px;opacity:.6;"
+           "white-space:nowrap;overflow:hidden'>" + "".join(hdr_cells) + "</div>")
 
+    ROW_SPEC = [8.4, 0.55, 0.55, 0.55]
     with st.container(height=560, border=True):
-        st.markdown(hdr, unsafe_allow_html=True)
+        h_info, *_ = st.columns(ROW_SPEC, gap="small")
+        h_info.markdown(hdr, unsafe_allow_html=True)
         for _, r in shown.iterrows():
             status = status_by_key.get(r["key"], "")
-            c_info, c_cd, c_tk, c_my = st.columns([8.4, 0.55, 0.55, 0.55],
-                                                  vertical_alignment="center", gap="small")
+            c_info, c_cd, c_tk, c_my = st.columns(ROW_SPEC, vertical_alignment="center",
+                                                  gap="small")
             c_info.markdown(_row_html(r, status), unsafe_allow_html=True)
             c_cd.button("ℹ️", key=f"cd_{r['key']}", on_click=row_card, args=(r["key"],),
-                        help="Player card + news")
+                        width="stretch", help="Player card + news")
             if not status:
                 c_tk.button("🚫", key=f"tk_{r['key']}", on_click=row_pick,
-                            args=(r["key"], False), help=f"Taken by {on_clock_name}")
+                            args=(r["key"], False), width="stretch",
+                            help=f"Taken by {on_clock_name}")
                 c_my.button("✅", key=f"my_{r['key']}", on_click=row_pick,
-                            args=(r["key"], True), help="My pick!")
+                            args=(r["key"], True), width="stretch", help="My pick!")
         if len(shown) == 40:
             st.caption("Showing top 40 — use search or position filters to dig deeper.")
 
@@ -645,9 +652,14 @@ with tab_team:
         else:
             slots_rows.append({"Slot": f"FLEX{i + 1}", "Player": "—", "Team": "", "Bye": ""})
     bench = [p for p in picks if p["mine"] and p["key"] not in assigned]
-    for i, p in enumerate(bench):
-        slots_rows.append({"Slot": f"BN{i + 1}", "Player": p["player"],
-                           "Team": p["team"], "Bye": str(p["bye"])})
+    n_bench = max(len(bench), int(rounds) - sum(int(v) for v in spots.values()))
+    for i in range(n_bench):
+        if i < len(bench):
+            p = bench[i]
+            slots_rows.append({"Slot": f"BN{i + 1}", "Player": p["player"],
+                               "Team": p["team"], "Bye": str(p["bye"])})
+        else:
+            slots_rows.append({"Slot": f"BN{i + 1}", "Player": "—", "Team": "", "Bye": ""})
     st.dataframe(pd.DataFrame(slots_rows), hide_index=True, width="stretch")
 
     open_needs = {k: v for k, v in needs.items() if v > 0}
