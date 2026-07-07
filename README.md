@@ -9,11 +9,12 @@ Main app file: `draftaid.py`.
   tiers), real-draft ADP from FantasyFootballCalculator (12-team PPR), and Sleeper
   injury/trending data every time you hit **🔄 Refresh live rankings**. Optionally blend in
   Underdog's rankings via CSV upload. Source weights are adjustable in the sidebar.
-- **Draft tracking** — log every pick with two taps (type a name → *Taken* or *My pick*),
-  or select a row on the board to open a **player card**: headshot, age/college, expert
-  rank range, ADP, live news headlines, and big *Draft to MY team* / *Taken by …* buttons.
-  Undo and full pick-log editing included, and a "Show drafted" toggle keeps taken players
-  visible (struck through, with who took them).
+- **One-tap draft tracking** — every board row has its own ℹ️ / 🚫 / ✅ buttons: one tap
+  opens the **player card** (headshot, team logo, age/college, expert rank range, ADP,
+  live news headlines, and big *Draft to MY team* / *Taken by …* buttons), one tap logs a
+  pick to the on-clock team, one tap drafts him to you. Type-ahead quick entry, one-tap
+  draft straight from the suggestions, undo, and full pick-log editing included. A "Show
+  drafted" toggle keeps taken players visible (struck through, with who took them).
 - **League setup** — an editable table of team names and pick order (change it each year
   in seconds), with a "which team is you?" selector that derives your draft slot.
 - **Snake-draft awareness** — always shows the current round/pick, when your next turn is,

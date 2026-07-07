@@ -267,6 +267,23 @@ def _img_url(r) -> str | None:
             if pd.notna(sid) else None)
 
 
+def team_logo(team: str) -> str:
+    return f"https://sleepercdn.com/images/team_logos/nfl/{str(team).lower()}.png"
+
+
+def row_card(key: str):
+    st.session_state.card_request = key
+
+
+def row_pick(key: str, mine: bool):
+    """One-tap Taken/Mine straight from a board row."""
+    if any(p["key"] == key for p in st.session_state.picks):
+        return  # double-tap guard
+    match = board[board["key"] == key]
+    if len(match):
+        _apply_pick(match.iloc[0], mine)
+
+
 def team_roster(team_slot: int) -> list[dict]:
     return [p for i, p in enumerate(st.session_state.picks)
             if dl.snake_team_for_pick(p.get("overall", i + 1), int(teams)) == team_slot]
@@ -304,7 +321,8 @@ def player_card(row: pd.Series):
     if img:
         c_img.image(img, width=90)
     with c_head:
-        st.markdown(f"### {row['player']}")
+        st.markdown(f"### {row['player']} &nbsp;<img src='{team_logo(row['team'])}' "
+                    f"width='28' style='vertical-align:-3px'>", unsafe_allow_html=True)
         bits = [str(row["pos_rank"]), str(row["team"]), f"Bye {row['bye']}"]
         if pd.notna(row.get("age")):
             bits.append(f"Age {int(row['age'])}")
@@ -430,9 +448,17 @@ with tab_board:
         st.markdown("##### 💡 Suggested for your next pick")
         for i, (_, s) in enumerate(sugg.iterrows()):
             marker = "🥇🥈🥉４５"[i] if i < 5 else "·"
-            st.markdown(
-                f"{marker} **{s['player']}** ({s['pos_rank']}, {s['team']}, bye {s['bye']})"
-                f" — {s['why']}")
+            g1, g2, g3 = st.columns([9, 0.55, 0.55], vertical_alignment="center",
+                                    gap="small")
+            g1.markdown(
+                f"{marker} **{s['player']}** "
+                f"<img src='{team_logo(s['team'])}' width='16' style='vertical-align:-3px'> "
+                f"({s['pos_rank']}, bye {s['bye']}) — {s['why']}",
+                unsafe_allow_html=True)
+            g2.button("ℹ️", key=f"sg_cd_{s['key']}", on_click=row_card, args=(s["key"],),
+                      help="Player card + news")
+            g3.button("✅", key=f"sg_my_{s['key']}", on_click=row_pick, args=(s["key"], True),
+                      help="Draft him to my team")
 
     # --- quick entry
     st.markdown("##### Log a pick")
@@ -463,7 +489,7 @@ with tab_board:
         pm2.button("Sim to my turn", key="btn_simme", on_click=sim_picks, args=(True,),
                    width="stretch", disabled=on_clock)
 
-    # --- filters + table
+    # --- filters + fast board
     fc1, fc2, fc3 = st.columns([2, 2.6, 1.2])
     pos_filter = fc1.multiselect("Position", POSITIONS, default=[],
                                  placeholder="All positions")
@@ -472,13 +498,6 @@ with tab_board:
                               help="Keep drafted players on the board, struck through, "
                                    "with who took them")
 
-    # Reset the row selection whenever the view changes so a stale selection
-    # can't point at a different player.
-    view_sig = (tuple(sorted(pos_filter)), search.strip().lower(), bool(show_drafted))
-    if st.session_state.get("_view_sig") != view_sig:
-        st.session_state._view_sig = view_sig
-        st.session_state.board_nonce += 1
-
     shown = board if show_drafted else available
     if pos_filter:
         shown = shown[shown["pos"].isin(pos_filter)]
@@ -486,67 +505,87 @@ with tab_board:
         q = search.strip().lower()
         shown = shown[shown["player"].str.lower().str.contains(q, regex=False)
                       | shown["team"].str.lower().str.contains(q, regex=False)]
-    shown = shown.head(250).reset_index(drop=True)
-    shown = shown.assign(img=shown.apply(_img_url, axis=1),
-                         status=shown["key"].map(status_by_key).fillna(""))
+    shown = shown.head(40)
 
-    display_cols = ["img", "rank", "player", "pos_rank", "team", "bye", "tier",
-                    "ecr", "adp", "value", "lasts", "injury", "trending"]
-    if show_drafted:
-        display_cols.insert(3, "status")
-    disp = shown[display_cols]
+    _STAT = "width:52px;text-align:right;opacity:.85;font-variant-numeric:tabular-nums"
 
-    def _row_style(row):
-        if shown.loc[row.name, "status"]:
-            return ["color: #8a8a8a; text-decoration: line-through"] * len(row)
-        color = dl.tier_color(shown.loc[row.name, "tier"])
-        return [f"background-color: {color}66" if color else ""] * len(row)
+    def _row_html(r, status: str) -> str:
+        color = dl.tier_color(r["tier"])
+        tier_chip = (f"<span style='background:{color};color:#fff;padding:0 7px;"
+                     f"border-radius:9px;font-size:11px'>T{int(r['tier'])}</span>"
+                     if r["tier"] else "")
+        head = _img_url(r)
+        head_img = (f"<img src='{head}' width='34' style='height:25px;object-fit:cover;"
+                    f"border-radius:4px;vertical-align:middle'>" if head else
+                    "<span style='width:34px;display:inline-block'></span>")
+        name = f"<b>{r['player']}</b>"
+        if status:
+            name = (f"<s style='opacity:.5'>{r['player']}</s> "
+                    f"<span style='font-size:11px;opacity:.65'>→ {status}</span>")
+        inj = (f" <span style='color:#ef9a9a;font-size:11px'>{r['injury']}</span>"
+               if r["injury"] else "")
+        fire = " 🔥" if r["trending"] > 500 else ""
+        if pd.notna(r["value"]):
+            vc = "#66bb6a" if r["value"] >= 3 else ("#ef5350" if r["value"] <= -3 else "#9e9e9e")
+            val = f"<span style='{_STAT};color:{vc}'>{r['value']:+.0f}</span>"
+        else:
+            val = f"<span style='{_STAT}'>—</span>"
+        lasts = f"{r['lasts']:.0%}" if pd.notna(r.get("lasts")) else "—"
+        adp = f"{r['adp']:.0f}" if pd.notna(r["adp"]) else "—"
+        return (
+            "<div style='display:flex;align-items:center;gap:9px;font-size:14px;"
+            "white-space:nowrap;overflow:hidden'>"
+            f"<span style='width:26px;text-align:right;opacity:.55'>{int(r['rank'])}</span>"
+            f"{head_img}"
+            f"<span style='flex:1;min-width:150px;overflow:hidden;text-overflow:ellipsis'>"
+            f"{name}{inj}{fire}</span>"
+            f"<span style='width:42px;opacity:.85'>{r['pos_rank']}</span>"
+            f"<span style='width:62px'><img src='{team_logo(r['team'])}' width='18' "
+            f"style='vertical-align:-4px'> {r['team']}</span>"
+            f"<span style='width:44px;opacity:.65'>bye {r['bye']}</span>"
+            f"<span style='width:36px'>{tier_chip}</span>"
+            f"<span style='{_STAT}'>E{int(r['ecr'])}</span>"
+            f"<span style='{_STAT}'>A{adp}</span>"
+            f"{val}"
+            f"<span style='{_STAT}'>{lasts}</span>"
+            "</div>")
 
-    styled = disp.style.apply(_row_style, axis=1).format(
-        {"adp": "{:.1f}", "value": "{:+.1f}", "ecr": "{:.0f}"}, na_rep="—")
+    st.caption("ℹ️ = player card + news · 🚫 = taken by the team on the clock · ✅ = my pick  |  "
+               "Columns: E = expert rank, A = ADP, ± = value vs ADP, % = odds he lasts to your turn")
+    hdr = ("<div style='display:flex;gap:9px;font-size:11px;opacity:.6;padding:0 0 2px 0'>"
+           "<span style='width:26px;text-align:right'>#</span>"
+           "<span style='width:34px'></span>"
+           "<span style='flex:1;min-width:150px'>Player</span>"
+           "<span style='width:42px'>Pos</span><span style='width:62px'>Team</span>"
+           "<span style='width:44px'>Bye</span><span style='width:36px'>Tier</span>"
+           "<span style='width:52px;text-align:right'>ECR</span>"
+           "<span style='width:52px;text-align:right'>ADP</span>"
+           "<span style='width:52px;text-align:right'>Val</span>"
+           "<span style='width:52px;text-align:right'>Lasts</span></div>")
 
-    st.caption("👆 Tap the ⚪ at the left edge of a row to open the player card — news, "
-               "ranks, and draft buttons. (Or type a name above and hit ℹ️ Card.)")
-    event = st.dataframe(
-        styled, key=f"board_{st.session_state.board_nonce}",
-        on_select="rerun", selection_mode="single-row",
-        width="stretch", height=560, hide_index=True,
-        column_config={
-            "img": st.column_config.ImageColumn(" ", width="small"),
-            "rank": st.column_config.NumberColumn("#", width="small"),
-            "player": st.column_config.TextColumn("Player", width="medium"),
-            "status": st.column_config.TextColumn("Drafted by", width="small"),
-            "pos_rank": st.column_config.TextColumn("Pos", width="small"),
-            "team": st.column_config.TextColumn("Team", width="small"),
-            "bye": st.column_config.NumberColumn("Bye", width="small"),
-            "tier": st.column_config.NumberColumn("Tier", width="small"),
-            "ecr": st.column_config.NumberColumn("ECR", width="small",
-                                                 help="FantasyPros expert consensus rank"),
-            "adp": st.column_config.NumberColumn("ADP", width="small",
-                                                 help="Average draft position in real drafts"),
-            "value": st.column_config.NumberColumn("Val", width="small",
-                                                   help="ADP minus blended rank: positive = market lets him fall"),
-            "lasts": st.column_config.ProgressColumn(
-                "Lasts to your turn", min_value=0, max_value=1, format="percent",
-                help="Chance he's still available at your next turn"),
-            "injury": st.column_config.TextColumn("Injury", width="small"),
-            "trending": st.column_config.NumberColumn(
-                "🔥", width="small", help="Sleeper adds in the last 24h"),
-        },
-    )
+    with st.container(height=560, border=True):
+        st.markdown(hdr, unsafe_allow_html=True)
+        for _, r in shown.iterrows():
+            status = status_by_key.get(r["key"], "")
+            c_info, c_cd, c_tk, c_my = st.columns([8.4, 0.55, 0.55, 0.55],
+                                                  vertical_alignment="center", gap="small")
+            c_info.markdown(_row_html(r, status), unsafe_allow_html=True)
+            c_cd.button("ℹ️", key=f"cd_{r['key']}", on_click=row_card, args=(r["key"],),
+                        help="Player card + news")
+            if not status:
+                c_tk.button("🚫", key=f"tk_{r['key']}", on_click=row_pick,
+                            args=(r["key"], False), help=f"Taken by {on_clock_name}")
+                c_my.button("✅", key=f"my_{r['key']}", on_click=row_pick,
+                            args=(r["key"], True), help="My pick!")
+        if len(shown) == 40:
+            st.caption("Showing top 40 — use search or position filters to dig deeper.")
 
-    # Open the player card: from the ℹ️ Card button, or by clicking a table row.
+    # Open the player card (from any ℹ️ button or the quick-entry Card button).
     card_key = st.session_state.pop("card_request", None)
     if card_key is not None:
         match = board[board["key"] == card_key]
         if len(match):
             player_card(match.iloc[0])
-    elif event.selection.rows:
-        sel_row = shown.iloc[event.selection.rows[0]]
-        marker = (sel_row["key"], st.session_state.board_nonce)
-        if st.session_state.get("_card_marker") != marker:
-            st.session_state._card_marker = marker
-            player_card(sel_row)
 
 # ---------------------------------------------------------------- tiers
 
