@@ -18,6 +18,35 @@ from data_sources import build_board, fetch_player_news, parse_rankings_csv
 
 st.set_page_config(page_title="DraftAid", page_icon="🏈", layout="wide")
 
+# Mobile-first tweaks: keep row-action columns side-by-side on phones (Streamlit
+# stacks columns vertically below ~640px by default), tighten padding, and swap
+# board rows between a wide single-line layout (.da-d) and a compact two-line
+# layout (.da-m) based on screen width.
+st.markdown("""
+<style>
+div[data-testid="stColumn"] button { min-width: 42px; }
+.da-m { display: none; }
+@media (max-width: 700px) {
+  div[data-testid="stHorizontalBlock"] { flex-wrap: nowrap !important; gap: 0.3rem !important; }
+  div[data-testid="stColumn"] { min-width: 0 !important; }
+  .block-container { padding: 0.6rem 0.6rem 3rem !important; }
+  div[data-testid="stColumn"] button { padding: 0.3rem 0.45rem !important; }
+  .da-d { display: none !important; }
+  .da-m { display: flex !important; }
+  /* In board rows and suggestion rows, give the action-button columns a fixed
+     width and let the text column take the rest, so buttons never overlap. */
+  div[data-testid="stHorizontalBlock"]:has(.da-m) > div[data-testid="stColumn"],
+  div[data-testid="stHorizontalBlock"]:has(.da-sg) > div[data-testid="stColumn"] {
+    flex: 0 0 46px !important; min-width: 46px !important;
+  }
+  div[data-testid="stHorizontalBlock"]:has(.da-m) > div[data-testid="stColumn"]:first-child,
+  div[data-testid="stHorizontalBlock"]:has(.da-sg) > div[data-testid="stColumn"]:first-child {
+    flex: 1 1 auto !important; min-width: 0 !important;
+  }
+}
+</style>
+""", unsafe_allow_html=True)
+
 AUTOSAVE = Path(__file__).parent / "draft_autosave.json"
 POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
 DEFAULT_TEAMS = ["Buddy", "Giuseppe", "Scab", "Randino", "Nuzzo", "Geiger",
@@ -341,20 +370,25 @@ def player_card(row: pd.Series):
         if flags:
             st.markdown(" · ".join(flags))
 
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Board rank", f"#{int(row['rank'])}", f"Tier {int(row['tier'])}" if row["tier"] else None,
-              delta_color="off")
-    m2.metric("Experts (ECR)", f"#{int(row['ecr'])}", f"{int(row['ecr_best'])}–{int(row['ecr_worst'])}",
-              delta_color="off")
+    def _chip(label: str, value: str) -> str:
+        return ("<div style='background:rgba(125,125,125,.14);border-radius:10px;"
+                "padding:5px 12px'>"
+                f"<div style='font-size:10.5px;opacity:.65'>{label}</div>"
+                f"<div style='font-weight:700;white-space:nowrap'>{value}</div></div>")
+
     adp_pick = row["adp_pick"] if isinstance(row["adp_pick"], str) and row["adp_pick"] else "—"
-    m3.metric("ADP", adp_pick,
-              f"{row['adp']:.1f} overall" if pd.notna(row["adp"]) else None, delta_color="off")
-    m4.metric("Value vs ADP", f"{row['value']:+.1f}" if pd.notna(row["value"]) else "—",
-              "market lets him fall" if pd.notna(row["value"]) and row["value"] >= 5 else None,
-              delta_color="off")
     lasts = row.get("lasts")
-    m5.metric("Lasts to your turn", f"{lasts:.0%}" if pd.notna(lasts) else "—",
-              f"pick #{next_turn}" if next_turn else None, delta_color="off")
+    chips = [
+        _chip("Board", f"#{int(row['rank'])}"
+              + (f" · T{int(row['tier'])}" if row["tier"] else "")),
+        _chip("Experts", f"#{int(row['ecr'])} ({int(row['ecr_best'])}–{int(row['ecr_worst'])})"),
+        _chip("ADP", adp_pick + (f" · {row['adp']:.1f}" if pd.notna(row["adp"]) else "")),
+        _chip("Value", f"{row['value']:+.1f}" if pd.notna(row["value"]) else "—"),
+        _chip(f"Lasts to #{next_turn}" if next_turn else "Lasts",
+              f"{lasts:.0%}" if pd.notna(lasts) else "—"),
+    ]
+    st.markdown("<div style='display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 10px'>"
+                + "".join(chips) + "</div>", unsafe_allow_html=True)
 
     already = status_by_key.get(row["key"])
     if already:
@@ -364,10 +398,11 @@ def player_card(row: pd.Series):
             st.rerun()
     else:
         b1, b2 = st.columns(2)
-        if b1.button("✅ Draft to MY team", type="primary", width="stretch"):
+        if b1.button("✅ MY PICK", type="primary", width="stretch"):
             _apply_pick(row, True)
             st.rerun()
-        if b2.button(f"🚫 Taken by {on_clock_name}", width="stretch"):
+        if b2.button(f"🚫 {on_clock_name}", width="stretch",
+                     help=f"Drafted by {on_clock_name} (on the clock)"):
             _apply_pick(row, False)
             st.rerun()
 
@@ -392,35 +427,38 @@ def player_card(row: pd.Series):
 on_clock_name = (team_names[dl.snake_team_for_pick(current_overall, int(teams)) - 1]
                  if current_overall <= int(teams) * int(rounds) else "—")
 
-h1, h2, h3, h4 = st.columns([2, 2, 2, 3])
-h1.metric("On the clock", f"Round {rnd}, Pick {pick_in_rnd}",
-          f"#{current_overall} · {on_clock_name}", delta_color="off")
 if on_clock:
-    h2.metric("Your turn", "🚨 NOW", "make your pick", delta_color="off")
+    your_turn = "<b style='color:#ff5252'>🚨 YOU'RE UP</b>"
 elif upcoming:
-    h2.metric("Your next pick", f"#{upcoming[0]}", f"in {upcoming[0] - current_overall} picks",
-              delta_color="off")
+    your_turn = (f"🎯 you're up at <b>#{upcoming[0]}</b> "
+                 f"(in {upcoming[0] - current_overall})")
 else:
-    h2.metric("Your next pick", "—", "draft complete", delta_color="off")
-h3.metric("Your roster", f"{len(my_players)}/{int(rounds)}")
-with h4:
+    your_turn = "🏁 draft complete"
+st.markdown(
+    "<div style='display:flex;flex-wrap:wrap;gap:4px 18px;align-items:baseline'>"
+    f"<span style='font-size:1.45rem;font-weight:800'>R{rnd} · P{pick_in_rnd}</span>"
+    f"<span>⏰ <b>{on_clock_name}</b> on the clock</span>"
+    f"<span>{your_turn}</span>"
+    f"<span>📋 roster {len(my_players)}/{int(rounds)}</span>"
+    "</div>", unsafe_allow_html=True)
+
+rc1, rc2 = st.columns([0.8, 6], vertical_alignment="center", gap="small")
+if rc1.button("🔄", key="refresh_main", width="stretch",
+              help="Re-pull expert ranks, ADP, and injuries right now"):
+    st.cache_data.clear()
+    st.rerun()
+with rc2:
     drafts = board.attrs.get("adp_drafts", 0)
-    st.caption(f"Blend: {w_ecr}% FantasyPros · {w_adp}% ADP · {w_csv}% CSV"
-               + (f" ({st.session_state.csv_name})" if st.session_state.csv_name else ""))
-    if drafts:
-        st.caption(f"ADP from {drafts:,} real 12-team PPR drafts through "
-                   f"{board.attrs.get('adp_date', '')} · 🔄 in sidebar re-pulls everything")
-    with st.expander("Fix pick counter"):
-        st.caption("If the board got ahead of you, set the true overall pick number.")
-        fixed = st.number_input("Current overall pick", 1, int(teams) * int(rounds),
-                                current_overall, key="fix_overall")
-        if fixed != current_overall and st.button("Apply", key="apply_fix"):
-            st.session_state.phantom += fixed - current_overall
-            autosave()
-            st.rerun()
+    ecr_upd = board.attrs.get("ecr_updated", "") or board.attrs.get("ecr_fetched", "")
+    st.caption(f"Experts updated {ecr_upd} · ADP from {drafts:,} real drafts thru "
+               f"{board.attrs.get('adp_date', '')}"
+               + (f" · CSV: {st.session_state.csv_name}" if st.session_state.csv_name else ""))
 
 if on_clock:
     st.success("**You're on the clock!** Suggestions below ⬇")
+if not picks:
+    st.info("⚙️ Setup: open the sidebar (» top-left) to set this year's team names, "
+            "draft order, and which team is you. Then log every pick here as it happens.")
 
 if picks:
     ticker = []
@@ -451,9 +489,9 @@ with tab_board:
             g1, g2, g3 = st.columns([9, 0.55, 0.55], vertical_alignment="center",
                                     gap="small")
             g1.markdown(
-                f"{marker} **{s['player']}** "
+                f"<span class='da-sg'>{marker} <b>{s['player']}</b> "
                 f"<img src='{team_logo(s['team'])}' width='16' style='vertical-align:-3px'> "
-                f"({s['pos_rank']}, bye {s['bye']}) — {s['why']}",
+                f"({s['pos_rank']}, bye {s['bye']}) — {s['why']}</span>",
                 unsafe_allow_html=True)
             g2.button("ℹ️", key=f"sg_cd_{s['key']}", on_click=row_card, args=(s["key"],),
                       help="Player card + news")
@@ -467,36 +505,45 @@ with tab_board:
         for _, r in available.iterrows()
     }
     st.session_state._quick_map = quick_map
-    qc1, qc2, qc3, qc4, qc5 = st.columns([3.6, 1, 1.2, 1.2, 1])
-    qc1.selectbox("Type a name…", quick_map.keys(), index=None, key="quick_pick",
-                  placeholder="Type a player name…", label_visibility="collapsed")
-    qc2.button("ℹ️ Card", key="btn_card", on_click=request_card, width="stretch",
+    st.selectbox("Type a name…", quick_map.keys(), index=None, key="quick_pick",
+                 placeholder="Type a player name…", label_visibility="collapsed")
+    qc1, qc2, qc3, qc4 = st.columns(4, gap="small")
+    qc1.button("ℹ️ Card", key="btn_card", on_click=request_card, width="stretch",
                help="Open the player card: news, ranks, and draft buttons")
-    qc3.button("🚫 Taken", key="btn_taken", on_click=record_quick, args=(False,),
+    qc2.button("🚫 Taken", key="btn_taken", on_click=record_quick, args=(False,),
                width="stretch",
                help="Someone else drafted this player")
-    qc4.button("✅ My pick", key="btn_mine", type="primary", on_click=record_quick, args=(True,),
+    qc3.button("✅ Mine", key="btn_mine", type="primary", on_click=record_quick, args=(True,),
                width="stretch")
-    qc5.button("↩ Undo", key="btn_undo", on_click=undo_pick, width="stretch",
+    qc4.button("↩ Undo", key="btn_undo", on_click=undo_pick, width="stretch",
                disabled=not picks, help="Remove the last logged pick")
 
-    with st.expander("🤖 Practice mode (mock draft)"):
-        st.caption("Simulates the other teams' picks so you can rehearse before draft day. "
-                   "Don't use this during the real draft — log real picks instead.")
+    with st.expander("🤖 Practice mode · fix pick counter"):
+        st.caption("Practice: simulates the other teams' picks so you can rehearse. "
+                   "Don't use during the real draft.")
         pm1, pm2 = st.columns(2)
         pm1.button("Sim 1 pick", key="btn_sim1", on_click=sim_picks, args=(False,),
                    width="stretch", disabled=on_clock)
         pm2.button("Sim to my turn", key="btn_simme", on_click=sim_picks, args=(True,),
                    width="stretch", disabled=on_clock)
+        st.caption("Board got ahead of you? Set the true overall pick number:")
+        fx1, fx2 = st.columns([2, 1], vertical_alignment="bottom")
+        fixed = fx1.number_input("Current overall pick", 1, int(teams) * int(rounds),
+                                 current_overall, key="fix_overall")
+        if fixed != current_overall and fx2.button("Apply", key="apply_fix", width="stretch"):
+            st.session_state.phantom += fixed - current_overall
+            autosave()
+            st.rerun()
 
     # --- filters + fast board
-    fc1, fc2, fc3 = st.columns([2, 2.6, 1.2])
+    fc1, fc2 = st.columns([2.5, 1.5], vertical_alignment="center", gap="small")
     pos_filter = fc1.multiselect("Position", POSITIONS, default=[],
-                                 placeholder="All positions")
-    search = fc2.text_input("Search", placeholder="Filter by player or team…")
-    show_drafted = fc3.toggle("Show drafted", value=False,
+                                 placeholder="All positions", label_visibility="collapsed")
+    show_drafted = fc2.toggle("Drafted", value=False,
                               help="Keep drafted players on the board, struck through, "
                                    "with who took them")
+    search = st.text_input("Search", placeholder="Filter by player or team…",
+                           label_visibility="collapsed")
 
     shown = board if show_drafted else available
     if pos_filter:
@@ -556,15 +603,41 @@ with tab_board:
             _cell(val_txt, 52, "right", f"font-variant-numeric:tabular-nums;{val_extra}"),
             _cell(lasts, 52, "right", num),
         ]
-        return ("<div style='display:flex;align-items:center;gap:9px;font-size:14px;"
-                "white-space:nowrap;overflow:hidden'>" + "".join(cells) + "</div>")
+        desktop = ("<div class='da-d' style='display:flex;align-items:center;gap:9px;"
+                   "font-size:14px;white-space:nowrap;overflow:hidden'>"
+                   + "".join(cells) + "</div>")
+
+        # Compact two-line layout for phones.
+        head_sm = (f"<img src='{head}' width='30' style='height:30px;object-fit:cover;"
+                   f"border-radius:50%;flex:none'>" if head else "")
+        tier_sm = (f"<span style='background:{color};color:#fff;border-radius:6px;"
+                   f"padding:0 4px;font-size:10px'>T{int(r['tier'])}</span> · "
+                   if r["tier"] else "")
+        val_sm = f"<span style='{val_extra}'>{val_txt}</span>" if val_txt != "—" else "—"
+        meta = (f"{r['pos_rank']} · <img src='{team_logo(r['team'])}' width='12' "
+                f"style='vertical-align:-2px'> {r['team']} · bye {r['bye']} · {tier_sm}"
+                f"E{int(r['ecr'])} A{adp} {val_sm} · lasts {lasts}")
+        name_sm = (f"<s style='opacity:.55'>{r['player']}</s>"
+                   f" <span style='font-size:10px;opacity:.65'>→ {status}</span>"
+                   if status else f"{r['player']}")
+        mobile = ("<div class='da-m' style='align-items:center;gap:8px;overflow:hidden'>"
+                  f"<span style='flex:none;opacity:.5;font-size:11px;width:18px;"
+                  f"text-align:right'>{int(r['rank'])}</span>{head_sm}"
+                  "<span style='min-width:0;overflow:hidden'>"
+                  f"<span style='display:block;font-weight:600;font-size:13px;"
+                  f"white-space:nowrap;overflow:hidden;text-overflow:ellipsis'>"
+                  f"{name_sm}{inj}{fire}</span>"
+                  f"<span style='display:block;font-size:10.5px;opacity:.8;"
+                  f"line-height:1.4'>{meta}</span>"
+                  "</span></div>")
+        return desktop + mobile
 
     st.caption("ℹ️ = player card + news · 🚫 = taken by the team on the clock · ✅ = my pick  |  "
                "Columns: E = expert rank, A = ADP, ± = value vs ADP, % = odds he lasts to your turn")
     hdr_cells = [_cell(label, w, align) for label, w, align in _COLS[:2]]
     hdr_cells.append(f"<span style='{_NAME}'>Player</span>")
     hdr_cells += [_cell(label, w, align) for label, w, align in _COLS[2:]]
-    hdr = ("<div style='display:flex;gap:9px;font-size:11px;opacity:.6;"
+    hdr = ("<div class='da-d' style='display:flex;gap:9px;font-size:11px;opacity:.6;"
            "white-space:nowrap;overflow:hidden'>" + "".join(hdr_cells) + "</div>")
 
     ROW_SPEC = [8.4, 0.55, 0.55, 0.55]
@@ -675,32 +748,30 @@ with tab_team:
 # ---------------------------------------------------------------- league
 
 with tab_league:
-    lc1, lc2 = st.columns([2, 3])
-    with lc1:
-        st.markdown("#### Team roster")
-        viewer = st.selectbox("Team", [f"{i}. {team_names[i - 1]}" for i in range(1, int(teams) + 1)],
-                              index=int(slot) - 1, label_visibility="collapsed")
-        vslot = int(viewer.split(".")[0])
-        roster = team_roster(vslot)
-        if roster:
-            rows = []
-            for p in roster:
-                r, k = dl.round_and_pick(p.get("overall", 1), int(teams))
-                rows.append({"Pick": f"{r}.{k:02d}", "Player": p["player"],
-                             "Pos": p["pos"], "Team": p["team"], "Bye": str(p["bye"])})
-            st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
-        else:
-            st.caption("No picks logged for this team yet.")
-    with lc2:
-        st.markdown("#### Who has what")
-        st.caption("Position counts per team — spot who still needs a QB/TE before a run starts.")
-        grid = []
-        for i in range(1, int(teams) + 1):
-            counts = pd.Series([p["pos"] for p in team_roster(i)]).value_counts()
-            grid.append({"Team": team_names[i - 1] + (" ⭐" if i == int(slot) else ""),
-                         **{pos: int(counts.get(pos, 0)) for pos in POSITIONS}})
-        st.dataframe(pd.DataFrame(grid), hide_index=True, width="stretch",
-                     height=int(teams) * 35 + 40)
+    st.markdown("#### Who has what")
+    st.caption("Position counts per team — spot who still needs a QB/TE before a run starts.")
+    grid = []
+    for i in range(1, int(teams) + 1):
+        counts = pd.Series([p["pos"] for p in team_roster(i)]).value_counts()
+        grid.append({"Team": team_names[i - 1] + (" ⭐" if i == int(slot) else ""),
+                     **{pos: int(counts.get(pos, 0)) for pos in POSITIONS}})
+    st.dataframe(pd.DataFrame(grid), hide_index=True, width="stretch",
+                 height=int(teams) * 35 + 40)
+
+    st.markdown("#### Team roster")
+    viewer = st.selectbox("Team", [f"{i}. {team_names[i - 1]}" for i in range(1, int(teams) + 1)],
+                          index=int(slot) - 1, label_visibility="collapsed")
+    vslot = int(viewer.split(".")[0])
+    roster = team_roster(vslot)
+    if roster:
+        rows = []
+        for p in roster:
+            r, k = dl.round_and_pick(p.get("overall", 1), int(teams))
+            rows.append({"Pick": f"{r}.{k:02d}", "Player": p["player"],
+                         "Pos": p["pos"], "Team": p["team"], "Bye": str(p["bye"])})
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    else:
+        st.caption("No picks logged for this team yet.")
 
 # ---------------------------------------------------------------- pick log
 

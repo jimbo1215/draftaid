@@ -10,6 +10,7 @@ Sources (all free, no API key):
 
 import json
 import re
+import time
 import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 
@@ -90,6 +91,8 @@ def fetch_fantasypros() -> pd.DataFrame:
         })
     df = pd.DataFrame(rows)
     df["key"] = [_player_key(n, p, t) for n, p, t in zip(df["player"], df["pos"], df["team"])]
+    df.attrs["updated"] = data.get("last_updated") or ""
+    df.attrs["fetched"] = time.strftime("%I:%M %p").lstrip("0")
     return df
 
 
@@ -230,6 +233,8 @@ def build_board(csv_ranks: pd.DataFrame | None = None,
                 weights: dict | None = None) -> pd.DataFrame:
     """Merge all sources into the master board, sorted by blended consensus rank."""
     fp = fetch_fantasypros()
+    ecr_updated = fp.attrs.get("updated", "")
+    ecr_fetched = fp.attrs.get("fetched", "")
     board = fp.copy()
 
     adp_drafts, adp_date = 0, ""
@@ -278,4 +283,6 @@ def build_board(csv_ranks: pd.DataFrame | None = None,
     board["value"] = (board["adp"] - board["consensus"]).round(1)
     board.attrs["adp_drafts"] = adp_drafts
     board.attrs["adp_date"] = adp_date
+    board.attrs["ecr_updated"] = ecr_updated
+    board.attrs["ecr_fetched"] = ecr_fetched
     return board
