@@ -1,5 +1,7 @@
 """Season-long logic: waiver targets with FAAB bids, trade ideas, start/sit."""
 
+import math
+
 import pandas as pd
 
 STARTER_SLOTS = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "FLEX": 1, "K": 1, "DST": 1}
@@ -163,64 +165,132 @@ def start_sit(my_roster: pd.DataFrame) -> list[dict]:
     return flags
 
 
+def trade_value(rank) -> float:
+    """Trade-value curve. Rank differences aren't linear: ROS 10 vs 20 is a
+    chasm, ROS 110 vs 120 is noise. v(1)≈118, v(24)≈85, v(50)≈59, v(100)≈29."""
+    if rank is None or pd.isna(rank):
+        return 0.0
+    return 120.0 * math.exp(-float(rank) / 70.0)
+
+
+def _depth_pieces(df: pd.DataFrame, pos: str) -> pd.DataFrame:
+    grp = df[(df["pos"] == pos) & df["ros_rank"].notna()].sort_values("ros_rank")
+    return grp.iloc[STARTER_SLOTS.get(pos, 1):]
+
+
 def trade_ideas(teams: dict[int, pd.DataFrame], my_id: int,
                 team_names: dict[int, str], top_n: int = 8) -> list[dict]:
-    """Cross-team surplus/deficit matching → concrete 1-for-1 trade ideas."""
-    needs = {tid: positional_needs(df) for tid, df in teams.items()}
-    mine = needs.get(my_id, {})
-    my_roster = teams.get(my_id, pd.DataFrame())
+    """Propose trades the OTHER side could plausibly say yes to.
 
-    # My weak and strong position groups (skip K/DST: nobody trades those).
-    weak = sorted(mine.items(), key=lambda kv: kv[1]["starter_avg"], reverse=True)
-    strong = [(pos, n) for pos, n in mine.items() if n["depth"] >= 1]
+    Only deals inside a fairness window on the value curve are kept, every
+    idea must address a real need on both sides, and 2-for-1 packages let you
+    consolidate depth into one better starter (paying the usual premium)."""
+    needs = {tid: positional_needs(df) for tid, df in teams.items()}
+    if my_id not in needs or len(needs) < 2:
+        return []
+    positions = ("QB", "RB", "WR", "TE")
+    league_avg = {pos: sum(n[pos]["starter_avg"] for n in needs.values()) / len(needs)
+                  for pos in positions}
+
+    def weakness(tid):  # starter_avg above league average = weak (positive)
+        return {pos: needs[tid][pos]["starter_avg"] - league_avg[pos]
+                for pos in positions}
+
+    my_roster = teams[my_id]
+    my_weak = weakness(my_id)
+    weak_targets = sorted((p for p in positions if my_weak[p] > 5),
+                          key=lambda p: -my_weak[p])[:2]
+    if not weak_targets:
+        return []
+
+    # My tradable depth: bench-quality-or-better pieces beyond my starters,
+    # best six by value so package loops stay small.
+    my_depth = []
+    for pos in positions:
+        for _, p in _depth_pieces(my_roster, pos).iterrows():
+            if p["ros_rank"] <= STARTABLE_ROS[pos] * 1.3:
+                my_depth.append(p)
+    my_depth.sort(key=lambda p: p["ros_rank"])
+    my_depth = my_depth[:6]
 
     ideas = []
-    for w_pos, w_info in weak[:2]:
-        if w_info["starter_avg"] < 60:
-            continue  # not actually weak
-        for tid, their_needs in needs.items():
-            if tid == my_id:
-                continue
-            th = their_needs.get(w_pos)
-            if not th or th["depth"] < 1:
-                continue  # they have no surplus where I'm weak
-            their_roster = teams[tid]
-            grp = their_roster[(their_roster["pos"] == w_pos)
-                               & their_roster["ros_rank"].notna()].sort_values("ros_rank")
+    for tid, their in teams.items():
+        if tid == my_id:
+            continue
+        th_weak = weakness(tid)
+        th_needs = needs[tid]
+        for w_pos in weak_targets:
+            grp = their[(their["pos"] == w_pos)
+                        & their["ros_rank"].notna()].sort_values("ros_rank")
             n_start = STARTER_SLOTS.get(w_pos, 1)
-            targets = grp.iloc[n_start:n_start + 2]  # their depth, not their studs
-            for _, tgt in targets.iterrows():
-                if tgt["ros_rank"] > STARTABLE_ROS[w_pos]:
-                    continue
-                # what do I offer? my surplus depth closest in ROS value,
-                # ideally at a position where THEY are weak.
-                best_offer, offer_gap = None, 1e9
-                for s_pos, s_info in strong:
-                    if s_pos == w_pos:
+            gettable = [r for _, r in grp.iloc[n_start:n_start + 2].iterrows()]
+            # If they're 2+ deep beyond starters, even their last starter is in
+            # play for the right return.
+            if len(grp) - n_start >= 2 and n_start >= 1:
+                gettable.insert(0, grp.iloc[n_start - 1])
+
+            my_starters = my_roster[(my_roster["pos"] == w_pos)
+                                    & my_roster["ros_rank"].notna()].sort_values("ros_rank")
+            worst_starter = my_starters.iloc[:n_start].tail(1)
+            worst_v = trade_value(worst_starter.iloc[0]["ros_rank"]) if len(worst_starter) else 0.0
+
+            for tgt in gettable:
+                tv = trade_value(tgt["ros_rank"])
+                if tv <= worst_v + 3:
+                    continue  # wouldn't move my lineup
+                slot_note = (f"slots in over {worst_starter.iloc[0]['player']}"
+                             if len(worst_starter) else f"becomes your {w_pos}1")
+
+                # ---- 1-for-1: my depth piece, near-even value, at a spot
+                # where THEY are actually thin.
+                for off in my_depth:
+                    if off["pos"] == w_pos:
                         continue
-                    their_s = their_needs.get(s_pos)
-                    my_grp = my_roster[(my_roster["pos"] == s_pos)
-                                       & my_roster["ros_rank"].notna()].sort_values("ros_rank")
-                    depth = my_grp.iloc[STARTER_SLOTS.get(s_pos, 1):]
-                    for _, off in depth.iterrows():
-                        gap = abs(off["ros_rank"] - tgt["ros_rank"])
-                        bonus = -25 if (their_s and their_s["starter_avg"] > 100) else 0
-                        if gap + bonus < offer_gap:
-                            offer_gap, best_offer = gap + bonus, off
-                if best_offer is None:
-                    continue
-                fairness = best_offer["ros_rank"] - tgt["ros_rank"]  # + = I win
-                ideas.append({
-                    "team": team_names.get(tid, f"Team {tid}"),
-                    "get": tgt, "give": best_offer, "edge": fairness,
-                    "why": (f"They're {th['depth']}-deep at {w_pos}, you need one; "
-                            f"you're deep at {best_offer['pos']}"),
-                })
-    ideas.sort(key=lambda i: -i["edge"])
-    # keep the best idea per opposing team
-    seen, out = set(), []
+                    ratio = trade_value(off["ros_rank"]) / tv
+                    their_gap = th_weak.get(off["pos"], 0.0)
+                    if not (0.88 <= ratio <= 1.18) or their_gap < 3:
+                        continue
+                    score = (30 * (1 - abs(ratio - 1.02) / 0.16)
+                             + min(their_gap, 30) + min(my_weak[w_pos], 30))
+                    ideas.append({
+                        "team": team_names.get(tid, f"Team {tid}"), "kind": "1-for-1",
+                        "get": tgt, "give": [off], "ratio": ratio, "score": score,
+                        "why_me": f"{tgt['player']} {slot_note}",
+                        "why_them": (f"{off['player']} upgrades their {off['pos']} "
+                                     f"(their {off['pos']} starters average ROS "
+                                     f"{th_needs[off['pos']]['starter_avg']:.0f})"),
+                    })
+
+                # ---- 2-for-1: two depth pieces for their better player. The
+                # side getting two pays a consolidation premium (~10-30% by
+                # combined value), which is why these get accepted.
+                for i in range(len(my_depth)):
+                    for j in range(i + 1, len(my_depth)):
+                        a, b = my_depth[i], my_depth[j]
+                        if w_pos in (a["pos"], b["pos"]):
+                            continue
+                        pkg = trade_value(a["ros_rank"]) + 0.7 * trade_value(b["ros_rank"])
+                        ratio = pkg / tv
+                        their_gap = max(th_weak.get(a["pos"], 0), th_weak.get(b["pos"], 0))
+                        if not (1.02 <= ratio <= 1.40) or their_gap < 3:
+                            continue
+                        score = (25 * (1 - abs(ratio - 1.18) / 0.25)
+                                 + min(their_gap, 30) + min(my_weak[w_pos], 30) + 6)
+                        ideas.append({
+                            "team": team_names.get(tid, f"Team {tid}"), "kind": "2-for-1",
+                            "get": tgt, "give": [a, b], "ratio": ratio, "score": score,
+                            "why_me": (f"consolidate two bench pieces into one "
+                                       f"starter — {tgt['player']} {slot_note}"),
+                            "why_them": (f"they turn one player into two rotation "
+                                         f"pieces where they're thin "
+                                         f"({a['pos']}/{b['pos']})"),
+                        })
+
+    ideas.sort(key=lambda i: -i["score"])
+    out, per_team = [], {}
     for i in ideas:
-        if i["team"] not in seen:
-            seen.add(i["team"])
-            out.append(i)
+        if per_team.get(i["team"], 0) >= 2:
+            continue
+        per_team[i["team"]] = per_team.get(i["team"], 0) + 1
+        out.append(i)
     return out[:top_n]

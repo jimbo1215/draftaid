@@ -27,14 +27,31 @@ st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch",
              column_config={"FAAB left": st.column_config.NumberColumn(
                  "FAAB $", help="Remaining free-agent budget")})
 
-# --- this week's matchups
-st.markdown(f"##### Week {league['week']} matchups")
+# --- matchups with a week selector (past weeks show final scores)
+weeks = sorted({m["week"] for m in league["schedule"]
+                if m["week"] and m["week"] <= league["week"]})
+mc1, mc2 = st.columns([2, 2.5], vertical_alignment="center", gap="small")
+mc1.markdown("##### Matchups")
+wk = mc2.selectbox("Week", weeks, index=len(weeks) - 1 if weeks else 0,
+                   format_func=lambda w: f"Week {w}", label_visibility="collapsed")
+shown_any = False
 for m in league["schedule"]:
-    if m["week"] != league["week"]:
+    if m["week"] != wk:
         continue
+    shown_any = True
     h, a = names.get(m["home_id"], "?"), names.get(m["away_id"], "?")
     star = " ⭐" if mid in (m["home_id"], m["away_id"]) else ""
-    st.markdown(f"- **{a}** {m['away_pts']} @ **{h}** {m['home_pts']}{star}")
+    if m["winner"] in ("HOME", "AWAY"):
+        wname = h if m["winner"] == "HOME" else a
+        st.markdown(f"- **{a}** {m['away_pts']} @ **{h}** {m['home_pts']}"
+                    f" — {wname} wins{star}")
+    else:
+        st.markdown(f"- **{a}** {m['away_pts']} @ **{h}** {m['home_pts']}{star}")
+if shown_any and wk == league["week"] and all(
+        m["home_pts"] == 0 and m["away_pts"] == 0
+        for m in league["schedule"] if m["week"] == wk):
+    st.caption("No points yet — week hasn't kicked off. Pick an earlier week "
+               "for final scores.")
 
 # --- roster viewer
 st.markdown("##### Rosters")

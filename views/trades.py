@@ -14,23 +14,36 @@ if mid is None:
 refresh_row(league)
 st.markdown("### 🔁 Trade Finder")
 
+st.caption("Only deals near even value on a trade curve are shown — every idea "
+           "has to make sense for the other side too. 2-for-1s assume you pay "
+           "the usual consolidation premium.")
 ideas = trade_ideas(teams, mid, names)
 if not ideas:
-    st.info("No obvious trade fits right now — your roster is balanced, or "
-            "opponents don't have tradable surplus where you're thin.")
+    st.info("No realistic trade fits right now — either your starters are at or "
+            "above league average everywhere (nothing worth trading for), or "
+            "no opponent is both deep where you're thin AND thin where you're "
+            "deep. Check the strength table below to hunt manually.")
 for i in ideas:
-    get_p, give_p = i["get"], i["give"]
-    edge = i["edge"]
-    verdict = ("👍 you'd win this" if edge > 8
-               else "⚖️ fair swap" if edge > -8 else "needs a sweetener from them")
+    get_p = i["get"]
+    ratio = i["ratio"]
+    if i["kind"] == "1-for-1":
+        verdict = ("⚖️ dead even" if 0.97 <= ratio <= 1.07
+                   else "👍 slight value win for you" if ratio < 0.97
+                   else "🤝 you pay a little extra")
+    else:
+        verdict = "🤝 you pay the standard 2-for-1 premium"
+    gives = "  \n".join(
+        f"🔴 **GIVE {g['player']}** ({g['pos']}, {g['team']}, ROS {int(g['ros_rank'])})"
+        for g in i["give"])
     with st.container(border=True):
         st.markdown(
-            f"**Trade with {i['team']}** — {verdict}\n\n"
+            f"**{i['kind']} with {i['team']}** — {verdict}\n\n"
             f"🟢 **GET {get_p['player']}** ({get_p['pos']}, {get_p['team']}, "
             f"ROS {int(get_p['ros_rank'])})  \n"
-            f"🔴 **GIVE {give_p['player']}** ({give_p['pos']}, {give_p['team']}, "
-            f"ROS {int(give_p['ros_rank'])})  \n"
-            f"<span style='font-size:12.5px;opacity:.8'>{i['why']}</span>",
+            f"{gives}  \n"
+            f"<span style='font-size:12.5px;opacity:.85'>"
+            f"**For you:** {i['why_me']}<br>"
+            f"**For them:** {i['why_them']}</span>",
             unsafe_allow_html=True)
 
 # --- league positional strength map

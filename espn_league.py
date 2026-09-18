@@ -75,7 +75,7 @@ def fetch_league_raw(league_id: str, year: int, espn_s2: str = "", swid: str = "
     resp = requests.get(
         BASE.format(year=year, league_id=league_id),
         params=[("view", v) for v in
-                ("mTeam", "mRoster", "mSettings", "mMatchupScore")],
+                ("mTeam", "mRoster", "mSettings", "mMatchupScore", "mScoreboard")],
         cookies=_cookies({"espn_s2": espn_s2, "swid": swid}),
         headers=UA, timeout=30)
     if resp.status_code == 401:
@@ -194,14 +194,23 @@ def parse_league(raw: dict) -> dict:
             "moves": int(counter.get("acquisitions") or 0),
             "roster": roster,
         })
+    def _side_pts(side: dict, matchup_week) -> float:
+        """Best available score: ESPN fills totalPoints only once games are
+        final; live scores arrive in totalPointsLive / pointsByScoringPeriod."""
+        candidates = [side.get("totalPoints"), side.get("totalPointsLive"),
+                      (side.get("pointsByScoringPeriod") or {}).get(str(matchup_week))]
+        vals = [float(v) for v in candidates if v is not None]
+        return round(max(vals), 1) if vals else 0.0
+
     for m in raw.get("schedule", []) or []:
         home, away = m.get("home") or {}, m.get("away") or {}
+        mweek = m.get("matchupPeriodId")
         out["schedule"].append({
-            "week": m.get("matchupPeriodId"),
+            "week": mweek,
             "home_id": home.get("teamId"),
-            "home_pts": round(float(home.get("totalPoints") or 0), 1),
+            "home_pts": _side_pts(home, mweek),
             "away_id": away.get("teamId"),
-            "away_pts": round(float(away.get("totalPoints") or 0), 1),
+            "away_pts": _side_pts(away, mweek),
             "winner": m.get("winner", ""),
         })
     return out
