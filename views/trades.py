@@ -14,11 +14,11 @@ if mid is None:
 refresh_row(league)
 st.markdown("### 🔁 Trade Finder")
 
-st.caption("Player values come from FantasyCalc's market data — what players "
-           "actually trade for across thousands of real leagues — with expert "
-           "consensus as fallback. Only deals near even market value are shown, "
-           "and every idea has to make sense for the other side too. 2-for-1s "
-           "assume you pay the usual consolidation premium.")
+st.caption("A deal only shows up if it looks fair on **two independent value "
+           "scales** — FantasyCalc's real-trade market data AND expert "
+           "rest-of-season consensus — and fills a real need on both rosters. "
+           "When the sources disagree about a player, nothing is proposed. "
+           "2-for-1s assume the usual consolidation premium.")
 ideas = trade_ideas(teams, mid, names)
 if not ideas:
     st.info("No realistic trade fits right now — either your starters are at or "
@@ -37,11 +37,12 @@ for i in ideas:
     gives = "  \n".join(
         f"🔴 **GIVE {g['player']}** ({g['pos']}, {g['team']}, ROS {int(g['ros_rank'])})"
         for g in i["give"])
+    inj = f" · 🩹 {get_p['injury']}" if get_p.get("injury") else ""
     with st.container(border=True):
         st.markdown(
             f"**{i['kind']} with {i['team']}** — {verdict}\n\n"
             f"🟢 **GET {get_p['player']}** ({get_p['pos']}, {get_p['team']}, "
-            f"ROS {int(get_p['ros_rank'])})  \n"
+            f"ROS {int(get_p['ros_rank'])}{inj})  \n"
             f"{gives}  \n"
             f"<span style='font-size:12.5px;opacity:.85'>"
             f"**For you:** {i['why_me']}<br>"

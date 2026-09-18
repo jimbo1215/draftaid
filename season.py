@@ -268,6 +268,11 @@ def trade_ideas(teams: dict[int, pd.DataFrame], my_id: int,
 
                 # ---- 1-for-1: my depth piece, near-even value, at a spot
                 # where THEY are actually thin.
+                # Second opinion: the pure expert-consensus curve. A deal must
+                # look fair on BOTH scales -- when sources disagree hard about
+                # a player, we propose nothing rather than risk a fleece.
+                ecr_tv = trade_value(tgt.get("ros_rank"))
+
                 for off in my_depth:
                     if off["pos"] == w_pos:
                         continue
@@ -275,6 +280,11 @@ def trade_ideas(teams: dict[int, pd.DataFrame], my_id: int,
                     their_gap = th_weak.get(off["pos"], 0.0)
                     if not (0.88 <= ratio <= 1.18) or their_gap < 3:
                         continue
+                    if ecr_tv > 0:
+                        # one-directional guard: never overpay on the expert
+                        # scale, even when the market calls it even
+                        if trade_value(off.get("ros_rank")) / ecr_tv > 1.25:
+                            continue
                     score = (30 * (1 - abs(ratio - 1.02) / 0.16)
                              + min(their_gap, 30) + min(my_weak[w_pos], 30))
                     ideas.append({
@@ -299,6 +309,11 @@ def trade_ideas(teams: dict[int, pd.DataFrame], my_id: int,
                         their_gap = max(th_weak.get(a["pos"], 0), th_weak.get(b["pos"], 0))
                         if not (1.02 <= ratio <= 1.40) or their_gap < 3:
                             continue
+                        if ecr_tv > 0:
+                            pkg_ecr = (trade_value(a.get("ros_rank"))
+                                       + 0.7 * trade_value(b.get("ros_rank")))
+                            if pkg_ecr / ecr_tv > 1.45:
+                                continue
                         score = (25 * (1 - abs(ratio - 1.18) / 0.25)
                                  + min(their_gap, 30) + min(my_weak[w_pos], 30) + 6)
                         ideas.append({
