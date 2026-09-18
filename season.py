@@ -11,8 +11,10 @@ STARTABLE_ROS = {"QB": 130, "RB": 110, "WR": 110, "TE": 140, "K": 999, "DST": 99
 
 
 def enrich(players: list[dict], ros: pd.DataFrame, weekly: pd.DataFrame,
-           sleeper: pd.DataFrame | None = None, trending: dict | None = None) -> pd.DataFrame:
-    """Join ESPN players with FantasyPros ROS/weekly ranks and Sleeper data."""
+           sleeper: pd.DataFrame | None = None, trending: dict | None = None,
+           market: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Join ESPN players with FantasyPros ROS/weekly ranks, Sleeper data, and
+    FantasyCalc market values."""
     df = pd.DataFrame(players)
     if df.empty:
         return df
@@ -31,6 +33,11 @@ def enrich(players: list[dict], ros: pd.DataFrame, weekly: pd.DataFrame,
             df["trending"] = 0
     else:
         df["sleeper_id"], df["injury"], df["trending"] = None, "", 0
+    if (market is not None and not market.empty
+            and df["sleeper_id"].notna().any()):
+        df = df.merge(market, on="sleeper_id", how="left")
+    else:
+        df["mkt_value"], df["mkt_rank"] = pd.NA, pd.NA
     df["injury"] = df.apply(
         lambda r: r["injury"] or (r.get("espn_injury") or "").replace("_", " ").title()
         if (r.get("espn_injury") or "") not in ("", "ACTIVE") else r["injury"], axis=1)
@@ -99,6 +106,14 @@ def waiver_targets(fas: pd.DataFrame, my_roster: pd.DataFrame,
         if pd.notna(p.get("weekly_rank")) and p["weekly_rank"] <= 30:
             score += 10
             why.append(f"startable this week ({p['pos']}{int(p['weekly_rank'])})")
+
+        # ESPN's projection is computed with THIS league's scoring settings,
+        # so it corrects for any custom-scoring quirks the consensus misses.
+        proj = p.get("week_proj")
+        if proj is not None and pd.notna(proj):
+            score += min(float(proj), 22.0) * 0.8
+            if proj >= 12:
+                why.append(f"projects {proj:.1f} in your scoring this week")
 
         # FAAB sizing: percent of REMAINING budget by ROS tier, nudged by
         # need and trending, floored for pure streamers.
@@ -173,6 +188,16 @@ def trade_value(rank) -> float:
     return 120.0 * math.exp(-float(rank) / 70.0)
 
 
+def player_value(p) -> float:
+    """A player's trade value: FantasyCalc market value when available (what
+    real leagues actually trade at, scaled onto the curve's range), else the
+    expert-consensus curve."""
+    mv = p.get("mkt_value")
+    if mv is not None and pd.notna(mv):
+        return float(mv) / 90.0  # top of market (~10,700) ≈ curve top (~118)
+    return trade_value(p.get("ros_rank"))
+
+
 def _depth_pieces(df: pd.DataFrame, pos: str) -> pd.DataFrame:
     grp = df[(df["pos"] == pos) & df["ros_rank"].notna()].sort_values("ros_rank")
     return grp.iloc[STARTER_SLOTS.get(pos, 1):]
@@ -232,10 +257,10 @@ def trade_ideas(teams: dict[int, pd.DataFrame], my_id: int,
             my_starters = my_roster[(my_roster["pos"] == w_pos)
                                     & my_roster["ros_rank"].notna()].sort_values("ros_rank")
             worst_starter = my_starters.iloc[:n_start].tail(1)
-            worst_v = trade_value(worst_starter.iloc[0]["ros_rank"]) if len(worst_starter) else 0.0
+            worst_v = player_value(worst_starter.iloc[0]) if len(worst_starter) else 0.0
 
             for tgt in gettable:
-                tv = trade_value(tgt["ros_rank"])
+                tv = player_value(tgt)
                 if tv <= worst_v + 3:
                     continue  # wouldn't move my lineup
                 slot_note = (f"slots in over {worst_starter.iloc[0]['player']}"
@@ -246,7 +271,7 @@ def trade_ideas(teams: dict[int, pd.DataFrame], my_id: int,
                 for off in my_depth:
                     if off["pos"] == w_pos:
                         continue
-                    ratio = trade_value(off["ros_rank"]) / tv
+                    ratio = player_value(off) / tv
                     their_gap = th_weak.get(off["pos"], 0.0)
                     if not (0.88 <= ratio <= 1.18) or their_gap < 3:
                         continue
@@ -269,7 +294,7 @@ def trade_ideas(teams: dict[int, pd.DataFrame], my_id: int,
                         a, b = my_depth[i], my_depth[j]
                         if w_pos in (a["pos"], b["pos"]):
                             continue
-                        pkg = trade_value(a["ros_rank"]) + 0.7 * trade_value(b["ros_rank"])
+                        pkg = player_value(a) + 0.7 * player_value(b)
                         ratio = pkg / tv
                         their_gap = max(th_weak.get(a["pos"], 0), th_weak.get(b["pos"], 0))
                         if not (1.02 <= ratio <= 1.40) or their_gap < 3:

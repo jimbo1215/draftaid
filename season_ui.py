@@ -3,8 +3,8 @@
 import pandas as pd
 import streamlit as st
 
-from data_sources import (fetch_fp_ros, fetch_fp_weekly, fetch_sleeper_players,
-                          fetch_sleeper_trending)
+from data_sources import (fetch_fp_ros, fetch_fp_weekly, fetch_market_values,
+                          fetch_sleeper_players, fetch_sleeper_trending)
 from espn_league import get_free_agents, get_league, load_config
 from season import enrich
 
@@ -33,8 +33,12 @@ def league_ctx():
         trending = fetch_sleeper_trending()
     except Exception:
         sleeper, trending = pd.DataFrame(), {}
+    try:
+        market = fetch_market_values()
+    except Exception:
+        market = pd.DataFrame()
 
-    teams = {t["team_id"]: enrich(t["roster"], ros, weekly, sleeper, trending)
+    teams = {t["team_id"]: enrich(t["roster"], ros, weekly, sleeper, trending, market)
              for t in league["teams"]}
     names = {t["team_id"]: t["name"] for t in league["teams"]}
     return cfg, league, teams, names

@@ -14,9 +14,11 @@ if mid is None:
 refresh_row(league)
 st.markdown("### 🔁 Trade Finder")
 
-st.caption("Only deals near even value on a trade curve are shown — every idea "
-           "has to make sense for the other side too. 2-for-1s assume you pay "
-           "the usual consolidation premium.")
+st.caption("Player values come from FantasyCalc's market data — what players "
+           "actually trade for across thousands of real leagues — with expert "
+           "consensus as fallback. Only deals near even market value are shown, "
+           "and every idea has to make sense for the other side too. 2-for-1s "
+           "assume you pay the usual consolidation premium.")
 ideas = trade_ideas(teams, mid, names)
 if not ideas:
     st.info("No realistic trade fits right now — either your starters are at or "

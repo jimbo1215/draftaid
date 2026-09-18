@@ -222,6 +222,26 @@ def fetch_sleeper_trending(limit: int = 60) -> dict:
     return {item["player_id"]: item["count"] for item in resp.json()}
 
 
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def fetch_market_values() -> pd.DataFrame:
+    """FantasyCalc market values -- derived from real trades in thousands of
+    leagues (redraft, 1QB, 12-team, PPR). Joined by Sleeper ID."""
+    resp = requests.get(
+        "https://api.fantasycalc.com/values/current",
+        params={"isDynasty": "false", "numQbs": 1, "numTeams": 12, "ppr": 1},
+        headers=UA_HEADERS, timeout=30)
+    resp.raise_for_status()
+    rows = []
+    for item in resp.json():
+        sid = (item.get("player") or {}).get("sleeperId")
+        if sid is None:
+            continue
+        rows.append({"sleeper_id": str(sid),
+                     "mkt_value": float(item.get("value") or 0),
+                     "mkt_rank": item.get("overallRank")})
+    return pd.DataFrame(rows).drop_duplicates("sleeper_id")
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_player_news(player_name: str, limit: int = 3) -> list[dict]:
     """Latest headlines for a player from the Google News RSS feed.

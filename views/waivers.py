@@ -33,15 +33,19 @@ else:
                "claim priority instead of dollars.")
 
 with st.spinner("Ranking the wire…"):
-    from data_sources import fetch_fp_ros, fetch_fp_weekly, fetch_sleeper_players, \
-        fetch_sleeper_trending
+    from data_sources import fetch_fp_ros, fetch_fp_weekly, fetch_market_values, \
+        fetch_sleeper_players, fetch_sleeper_trending
     from season import enrich
     fas_raw = get_free_agents(cfg, league["week"])
     try:
         sleeper, trending = fetch_sleeper_players(), fetch_sleeper_trending()
     except Exception:
         sleeper, trending = pd.DataFrame(), {}
-    fas = enrich(fas_raw, fetch_fp_ros(), fetch_fp_weekly(), sleeper, trending)
+    try:
+        market = fetch_market_values()
+    except Exception:
+        market = pd.DataFrame()
+    fas = enrich(fas_raw, fetch_fp_ros(), fetch_fp_weekly(), sleeper, trending, market)
     targets = waiver_targets(fas, teams[mid], faab_left, league["uses_faab"])
 
 pos_filter = st.multiselect("Position", ["QB", "RB", "WR", "TE", "K", "DST"],
@@ -54,6 +58,8 @@ if shown.empty:
 for _, p in shown.iterrows():
     ros = f"ROS {int(p['ros_rank'])}" if pd.notna(p["ros_rank"]) else "unranked"
     wk = f" · wk {p['pos']}{int(p['weekly_rank'])}" if pd.notna(p["weekly_rank"]) else ""
+    proj = (f" · proj {p['week_proj']:.1f}"
+            if p.get("week_proj") is not None and pd.notna(p["week_proj"]) else "")
     own = f" · {p['pct_owned']:.0f}% rostered" if pd.notna(p.get("pct_owned")) else ""
     inj = f" · 🩹 {p['injury']}" if p["injury"] else ""
     with st.container(border=True):
@@ -62,7 +68,7 @@ for _, p in shown.iterrows():
             f"<img src='https://sleepercdn.com/images/team_logos/nfl/{str(p['team']).lower()}.png' "
             f"width='16' style='vertical-align:-3px'> "
             f"({p['pos']}, {p['team']}) — <b>bid {p['bid']}</b><br>"
-            f"<span style='font-size:12.5px;opacity:.8'>{ros}{wk}{own}{inj} · "
+            f"<span style='font-size:12.5px;opacity:.8'>{ros}{wk}{proj}{own}{inj} · "
             f"{p['why']}</span></div>",
             unsafe_allow_html=True)
 
@@ -74,4 +80,6 @@ if drops is not None and len(drops):
         st.caption(f"• {d['player']} ({d['pos']}, {d['team']}) — {ros}")
 st.caption("Bids are sized against your **remaining** budget: ~40–55% for a "
            "potential league-winner, ~20–30% for a solid starter, ~10% for depth, "
-           "$1–2 for streamers. Adjust for how badly you need the position.")
+           "$1–2 for streamers. Adjust for how badly you need the position. "
+           "The 'proj' number is ESPN's projection **in your league's exact "
+           "scoring**; the ROS/weekly ranks are full-PPR expert consensus.")
