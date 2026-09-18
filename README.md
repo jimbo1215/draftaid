@@ -1,9 +1,31 @@
 # 🏈 DraftAid
 
-A live draft assistant for 12-team, 1-QB, full-PPR snake drafts. Built with Streamlit.
-Main app file: `draftaid.py`.
+A season-long fantasy football assistant with a live draft room. Built with Streamlit.
+Main app file: `draftaid.py` (navigation entry; pages live in `views/`).
 
-## What it does
+## Season mode (ESPN-connected)
+
+Connect your ESPN league in **League Setup** (league ID, plus `espn_s2`/`SWID`
+cookies for private leagues — instructions in the app). Then:
+
+- **My Team** — live roster with FantasyPros rest-of-season + weekly ranks, ESPN
+  projections, start/sit flags, injury alerts, and per-player news headlines.
+- **Waivers & FAAB** — free agents ranked by ROS value, weekly startability, and
+  Sleeper trending, each with a suggested FAAB bid sized to your remaining budget,
+  plus your most droppable players.
+- **Trade Finder** — surplus/deficit matching across all teams: who to target,
+  what to offer, and a league-wide positional strength table.
+- **League** — standings with everyone's remaining FAAB, this week's matchups,
+  and a roster viewer.
+
+Credentials are stored in `league_config.json` (gitignored) or Streamlit secrets
+under `[espn]`, and are only ever sent to ESPN.
+
+## Draft Room
+
+The original live-draft assistant, unchanged, under the **Draft** section.
+
+## What the Draft Room does
 
 - **Blended live rankings** — pulls FantasyPros expert-consensus PPR rankings (with their
   tiers), real-draft ADP from FantasyFootballCalculator (12-team PPR), and Sleeper
@@ -42,7 +64,8 @@ streamlit run draftaid.py
 
 This repo backs the existing **draftaid** Streamlit Cloud app: pushing to `main` redeploys
 it automatically (the main file is still `draftaid.py`, so no app-settings change is
-needed). No API keys or secrets required; all data sources are free and public.
+needed). The ranking sources are free and public; the ESPN connection uses your own
+league credentials, best stored in the app's Streamlit secrets for permanence.
 
 ## Draft-day workflow
 

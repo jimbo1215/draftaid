@@ -1,4 +1,6 @@
 __pycache__/
 *.pyc
 draft_autosave.json
+league_config.json
+.streamlit/secrets.toml
 .claude/
