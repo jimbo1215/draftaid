@@ -14,21 +14,40 @@ if mid is None:
 refresh_row(league)
 st.markdown("### 🔁 Trade Finder")
 
-st.caption("A deal only shows up if it looks fair on **two independent value "
-           "scales** — FantasyCalc's real-trade market data AND expert "
-           "rest-of-season consensus — and fills a real need on both rosters. "
-           "When the sources disagree about a player, nothing is proposed. "
+st.caption("Fair deals must look even on **two independent value scales** — "
+           "FantasyCalc's real-trade market data AND expert rest-of-season "
+           "consensus — and fill a real need on both rosters. "
            "2-for-1s assume the usual consolidation premium.")
-ideas = trade_ideas(teams, mid, names)
+steals_on = st.toggle("😈 Include steals — offers tilted your way (they'll "
+                      "often decline, but asking is free)", value=True)
+ideas = trade_ideas(teams, mid, names, top_n=12 if steals_on else 8,
+                    include_steals=steals_on)
+
+needs_all = {tid: positional_needs(df) for tid, df in teams.items()}
 if not ideas:
-    st.info("No realistic trade fits right now — either your starters are at or "
-            "above league average everywhere (nothing worth trading for), or "
-            "no opponent is both deep where you're thin AND thin where you're "
-            "deep. Check the strength table below to hunt manually.")
+    _positions = ("QB", "RB", "WR", "TE")
+    _avg = {p: sum(n[p]["starter_avg"] for n in needs_all.values()) / len(needs_all)
+            for p in _positions}
+    _weak = [p for p in _positions
+             if needs_all[mid][p]["starter_avg"] - _avg[p] > 5]
+    if not _weak:
+        st.info("**No fair-trade fits, and here's why:** your starters are at "
+                "or above league average at every position, so there's no hole "
+                "worth paying market price to fix. That changes when injuries "
+                "or busts drop one of your position groups below average — or "
+                "when an opponent gets desperate.")
+    else:
+        st.info(f"**No fits right now:** you're thin at {', '.join(_weak)}, but "
+                "no opponent is both deep there AND thin where you have spare "
+                "depth, at a price both value sources call fair. Check back "
+                "after injuries shake up rosters, or hunt manually with the "
+                "strength table below.")
 for i in ideas:
     get_p = i["get"]
     ratio = i["ratio"]
-    if i["kind"] == "1-for-1":
+    if i["kind"] == "steal":
+        verdict = "😈 tilted your way — costs nothing to ask"
+    elif i["kind"] == "1-for-1":
         verdict = ("⚖️ dead even" if 0.97 <= ratio <= 1.07
                    else "👍 slight value win for you" if ratio < 0.97
                    else "🤝 you pay a little extra")
@@ -54,8 +73,8 @@ st.markdown("##### Positional strength around the league")
 st.caption("Average ROS rank of each team's starters — lower is stronger. "
            "Find the team weak where you're deep.")
 rows = []
-for tid, df in teams.items():
-    needs = positional_needs(df)
+for tid in teams:
+    needs = needs_all[tid]
     rows.append({"Team": names[tid] + (" ⭐" if tid == mid else ""),
                  **{pos: round(n["starter_avg"]) for pos, n in needs.items()},
                  "Depth+": sum(n["depth"] for n in needs.values())})

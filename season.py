@@ -204,7 +204,8 @@ def _depth_pieces(df: pd.DataFrame, pos: str) -> pd.DataFrame:
 
 
 def trade_ideas(teams: dict[int, pd.DataFrame], my_id: int,
-                team_names: dict[int, str], top_n: int = 8) -> list[dict]:
+                team_names: dict[int, str], top_n: int = 8,
+                include_steals: bool = False) -> list[dict]:
     """Propose trades the OTHER side could plausibly say yes to.
 
     Only deals inside a fairness window on the value curve are kept, every
@@ -225,7 +226,7 @@ def trade_ideas(teams: dict[int, pd.DataFrame], my_id: int,
     my_weak = weakness(my_id)
     weak_targets = sorted((p for p in positions if my_weak[p] > 5),
                           key=lambda p: -my_weak[p])[:2]
-    if not weak_targets:
+    if not weak_targets and not include_steals:
         return []
 
     # My tradable depth: bench-quality-or-better pieces beyond my starters,
@@ -325,6 +326,44 @@ def trade_ideas(teams: dict[int, pd.DataFrame], my_id: int,
                                          f"pieces where they're thin "
                                          f"({a['pos']}/{b['pos']})"),
                         })
+
+    # ---- steals: offers tilted MY way (below the fair window). The other
+    # side often declines, but asking costs nothing. Any position upgrade
+    # qualifies, not just my weak spots.
+    if include_steals and my_depth:
+        cheap_first = sorted(my_depth, key=player_value)
+        for tid, their in teams.items():
+            if tid == my_id:
+                continue
+            for pos in positions:
+                grp = their[(their["pos"] == pos)
+                            & their["ros_rank"].notna()].sort_values("ros_rank")
+                n_start = STARTER_SLOTS.get(pos, 1)
+                my_st = my_roster[(my_roster["pos"] == pos)
+                                  & my_roster["ros_rank"].notna()].sort_values("ros_rank")
+                worst_st = my_st.iloc[:n_start].tail(1)
+                worst_v = player_value(worst_st.iloc[0]) if len(worst_st) else 0.0
+                for _, tgt in grp.iloc[n_start:n_start + 2].iterrows():
+                    tv = player_value(tgt)
+                    if tv <= worst_v + 4:
+                        continue
+                    for off in cheap_first:
+                        if off["pos"] == pos:
+                            continue
+                        ratio = player_value(off) / tv
+                        if 0.45 <= ratio < 0.88:
+                            gain = tv - player_value(off)
+                            ideas.append({
+                                "team": team_names.get(tid, f"Team {tid}"),
+                                "kind": "steal", "get": tgt, "give": [off],
+                                "ratio": ratio, "score": 15 + gain * 0.4,
+                                "why_me": (f"{tgt['player']} upgrades your {pos} "
+                                           f"at a discount"),
+                                "why_them": ("honestly, not much — this one's "
+                                             "tilted your way. Worst case they "
+                                             "say no."),
+                            })
+                            break
 
     ideas.sort(key=lambda i: -i["score"])
     out, per_team = [], {}
