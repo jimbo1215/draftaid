@@ -10,9 +10,12 @@ cookies for private leagues — instructions in the app). Then:
 
 - **My Team** — live roster with FantasyPros rest-of-season + weekly ranks, ESPN
   projections, start/sit flags, injury alerts, and per-player news headlines.
-- **Waivers & FAAB** — free agents ranked by ROS value, weekly startability, and
-  Sleeper trending, each with a suggested FAAB bid sized to your remaining budget,
-  plus your most droppable players.
+- **Waiver Wire** — every free agent is tried in every add/drop swap against your
+  roster using your league's real lineup slots (ROS value from FantasyPros, this
+  week's points from ESPN in your league's scoring). Each pick shows the exact drop,
+  and a FAAB bid priced as a share of what the *rivals who'd start him* have left,
+  capped at the richest one's budget + $1 and scaled up as the season runs out.
+  The wire is cross-checked against every roster so picked-up players never show.
 - **Trade Finder** — surplus/deficit matching across all teams: who to target,
   what to offer, and a league-wide positional strength table.
 - **League** — standings with everyone's remaining FAAB, this week's matchups,
@@ -20,6 +23,11 @@ cookies for private leagues — instructions in the app). Then:
 
 Credentials are stored in `league_config.json` (gitignored) or Streamlit secrets
 under `[espn]`, and are only ever sent to ESPN.
+
+**Design:** all season pages render through `theme.py` (tokens, global CSS, and HTML
+components); the Streamlit theme lives in `.streamlit/config.toml`.
+**Local demo:** set `DRAFTAID_FIXTURE` to a folder holding raw ESPN `league.json` +
+`fas.json` payloads to preview the app without a live league.
 
 ## Draft Room
 

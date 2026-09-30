@@ -7,6 +7,8 @@ stored locally in league_config.json (gitignored) or Streamlit secrets under
 """
 
 import json
+import os
+import time
 from pathlib import Path
 
 import requests
@@ -29,12 +31,25 @@ PRO_TEAMS = {
 SLOT_MAP = {0: "QB", 2: "RB", 4: "WR", 6: "TE", 7: "OP", 16: "DST", 17: "K",
             20: "BN", 21: "IR", 23: "FLEX"}
 BENCH_SLOTS = {20, 21}
+# lineupSlotCounts ids -> the starter slots the lineup model understands.
+LINEUP_SLOT_IDS = {0: "QB", 2: "RB", 3: "RB/WR", 4: "WR", 6: "TE", 7: "OP",
+                   16: "DST", 17: "K", 23: "FLEX"}
+
+# Dev-only: point DRAFTAID_FIXTURE at a folder holding league.json + fas.json
+# (raw ESPN payloads) to preview the app without a live league.
+_FIXTURE = os.environ.get("DRAFTAID_FIXTURE")
+
+
+def _fixture(name: str):
+    return json.loads((Path(_FIXTURE) / name).read_text(encoding="utf-8"))
 
 
 # ------------------------------------------------------------------ config
 
 def load_config() -> dict:
     """League connection settings: file first, Streamlit secrets as fallback."""
+    if _FIXTURE:
+        return {"league_id": "fixture", "year": 2026, "my_team_id": 8}
     try:
         if CONFIG_FILE.exists():
             return json.loads(CONFIG_FILE.read_text())
@@ -70,8 +85,10 @@ def _cookies(cfg: dict) -> dict:
 
 # ------------------------------------------------------------------ fetchers
 
-@st.cache_data(ttl=300, show_spinner="Loading your ESPN league...")
+@st.cache_data(ttl=180, show_spinner=False)
 def fetch_league_raw(league_id: str, year: int, espn_s2: str = "", swid: str = "") -> dict:
+    if _FIXTURE:
+        return {**_fixture("league.json"), "_fetched": time.time()}
     resp = requests.get(
         BASE.format(year=year, league_id=league_id),
         params=[("view", v) for v in
@@ -87,12 +104,16 @@ def fetch_league_raw(league_id: str, year: int, espn_s2: str = "", swid: str = "
                           "Double-check the league ID and season.")
     resp.raise_for_status()
     data = resp.json()
-    return data[0] if isinstance(data, list) else data
+    data = data[0] if isinstance(data, list) else data
+    data["_fetched"] = time.time()
+    return data
 
 
-@st.cache_data(ttl=300, show_spinner="Scanning the waiver wire...")
+@st.cache_data(ttl=180, show_spinner=False)
 def fetch_free_agents(league_id: str, year: int, week: int,
                       espn_s2: str = "", swid: str = "", limit: int = 300) -> list:
+    if _FIXTURE:
+        return _fixture("fas.json")
     fltr = {"players": {
         "filterStatus": {"value": ["FREEAGENT", "WAIVERS"]},
         "limit": limit,
@@ -135,7 +156,9 @@ def parse_player(player: dict, week: int) -> dict:
     pos = POS_MAP.get(player.get("defaultPositionId"), "?")
     team = PRO_TEAMS.get(player.get("proTeamId"), "FA")
     name = player.get("fullName") or ""
-    own = (player.get("ownership") or {}).get("percentOwned")
+    ownership = player.get("ownership") or {}
+    own = ownership.get("percentOwned")
+    own_chg = ownership.get("percentChange")
     return {
         "espn_id": player.get("id"),
         "player": name,
@@ -145,6 +168,7 @@ def parse_player(player: dict, week: int) -> dict:
                 else f"{normalize_name(name)}|{pos}"),
         "espn_injury": player.get("injuryStatus") or "",
         "pct_owned": round(float(own), 1) if own is not None else None,
+        "own_change": round(float(own_chg), 1) if own_chg is not None else None,
         "week_proj": _week_proj(player, week),
         "season_pts": _season_actual(player),
     }
@@ -155,10 +179,20 @@ def parse_league(raw: dict) -> dict:
     settings = raw.get("settings", {}) or {}
     acq = settings.get("acquisitionSettings", {}) or {}
     week = int(raw.get("scoringPeriodId") or 1)
+    counts = ((settings.get("rosterSettings") or {}).get("lineupSlotCounts") or {})
+    lineup = {LINEUP_SLOT_IDS[int(k)]: int(v) for k, v in counts.items()
+              if int(k) in LINEUP_SLOT_IDS and int(v) > 0}
+    sched = settings.get("scheduleSettings") or {}
     out = {
         "league_name": settings.get("name", "ESPN League"),
         "week": week,
+        "fetched": raw.get("_fetched"),
+        "lineup": lineup,
+        "bench_slots": int(counts.get("20") or counts.get(20) or 0),
+        "regular_season_weeks": int(sched.get("matchupPeriodCount") or 14),
+        "playoff_teams": int(sched.get("playoffTeamCount") or 0),
         "faab_budget": int(acq.get("acquisitionBudget") or 0),
+        "min_bid": int(acq.get("minimumBid") or 0),
         "uses_faab": bool(acq.get("isUsingAcquisitionBudget",
                                   acq.get("acquisitionBudget"))),
         "teams": [],
@@ -222,12 +256,29 @@ def get_league(cfg: dict) -> dict:
     return parse_league(raw)
 
 
-def get_free_agents(cfg: dict, week: int) -> list[dict]:
+def get_free_agents(cfg: dict, league: dict) -> list[dict]:
+    """Free agents and waiver-wire players, minus anyone on a roster.
+
+    ESPN's status filter alone isn't trustworthy: players picked up since the
+    last league pull can still come back as available, and the two requests
+    are cached separately. So every entry is checked three ways -- its own
+    status, its onTeamId, and the league's actual rosters -- before it counts
+    as available."""
+    week = league["week"]
     players = fetch_free_agents(str(cfg["league_id"]), int(cfg.get("year") or 2026),
                                 week, cfg.get("espn_s2", ""), cfg.get("swid", ""))
+    rostered = {p["espn_id"] for t in league["teams"] for p in t["roster"]}
     out = []
     for entry in players:
         player = entry.get("player") or entry.get("playerPoolEntry", {}).get("player") or {}
-        if player:
-            out.append(parse_player(player, week))
+        if not player or player.get("id") in rostered:
+            continue
+        if entry.get("onTeamId") not in (None, 0):
+            continue
+        status = entry.get("status")
+        if status and status not in ("FREEAGENT", "WAIVERS"):
+            continue
+        p = parse_player(player, week)
+        p["on_waivers"] = status == "WAIVERS"
+        out.append(p)
     return out

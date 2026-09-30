@@ -214,7 +214,7 @@ def fetch_sleeper_players() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=900, show_spinner=False)
-def fetch_sleeper_trending(limit: int = 60) -> dict:
+def fetch_sleeper_trending(limit: int = 100) -> dict:
     """Map of sleeper_id -> add count over the last 24h."""
     resp = requests.get(SLEEPER_TRENDING_URL,
                         params={"lookback_hours": 24, "limit": limit}, timeout=30)

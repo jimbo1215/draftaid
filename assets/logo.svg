@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 150 32" fill="none">
+  <path d="M4 26 L14 6 H22 L12 26 Z" fill="#C5F82A"/>
+  <path d="M16 26 L26 6 H30 L20 26 Z" fill="#C5F82A" opacity=".45"/>
+  <text x="38" y="23.5" font-family="Barlow Condensed, Arial Narrow, sans-serif" font-weight="700" font-size="22" letter-spacing="1.2" fill="#E6E9EE">DRAFTAID</text>
+</svg>

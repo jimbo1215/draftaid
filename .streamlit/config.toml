@@ -1,6 +1,32 @@
 [theme]
 base = "dark"
-primaryColor = "#4caf50"
+primaryColor = "#C5F82A"
+backgroundColor = "#0A0C0F"
+secondaryBackgroundColor = "#14181E"
+textColor = "#E6E9EE"
+linkColor = "#C5F82A"
+borderColor = "#232932"
+showWidgetBorder = true
+baseRadius = "8px"
+buttonRadius = "8px"
+baseFontSize = 15
+font = "'IBM Plex Sans':https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+headingFont = "'Barlow Condensed':https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&display=swap"
+codeFont = "'IBM Plex Mono':https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+headingFontWeights = [700, 700, 600, 600, 600, 600]
+greenColor = "#2FD6A3"
+redColor = "#FF5D5D"
+yellowColor = "#FFC34D"
+blueColor = "#5AB0FF"
+chartCategoricalColors = ["#C5F82A", "#5AB0FF", "#FF6B8B", "#2FD6A3", "#FFA94D", "#B69CFF"]
+
+[theme.sidebar]
+backgroundColor = "#0D1014"
+secondaryBackgroundColor = "#14181E"
+borderColor = "#1C2129"
+
+[client]
+toolbarMode = "minimal"
 
 [browser]
 gatherUsageStats = false
