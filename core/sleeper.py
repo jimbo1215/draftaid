@@ -28,11 +28,13 @@ def _int_or_none(v):
         return None
 
 
-@st.cache_data(ttl=6 * 3600, show_spinner=False)
-def fetch_players() -> pd.DataFrame:
-    """Fantasy-relevant players with ids, injury status, and depth-chart slot.
-    `espn_id` lets ESPN rosters join by id instead of by name."""
-    players = http.get(f"{API}/players/nfl", timeout=120).json()
+def parse_players(players: dict) -> pd.DataFrame:
+    """Raw Sleeper player map -> fantasy-relevant rows keyed for joining.
+
+    Keys are built from the full name with our own normalization (Sleeper's
+    search name keeps "III"/"Jr.", ours doesn't). Anyone on an NFL roster is
+    kept whatever his status: "Inactive" is how Sleeper marks injured players,
+    the ones whose status matters most."""
     rows = []
     for pid, p in players.items():
         pos = p.get("position")
@@ -42,13 +44,12 @@ def fetch_players() -> pd.DataFrame:
                          "injury_note": "", "age": None, "years_exp": None, "college": "",
                          "depth_order": None})
             continue
-        if pos not in ("QB", "RB", "WR", "TE", "K") or p.get("status") not in (
-                "Active", "Injured Reserve"):
+        if pos not in ("QB", "RB", "WR", "TE", "K") or not (p.get("team") or p.get("active")):
             continue
-        name_key = p.get("search_full_name") or normalize_name(p.get("full_name", ""))
+        name = p.get("full_name") or f"{p.get('first_name', '')} {p.get('last_name', '')}"
         rows.append({
             "sleeper_id": pid,
-            "key": f"{name_key}|{pos}",
+            "key": f"{normalize_name(name)}|{pos}",
             "espn_id": _int_or_none(p.get("espn_id")),
             "nfl_team": normalize_team(p.get("team")),
             "injury": p.get("injury_status") or "",
@@ -58,7 +59,19 @@ def fetch_players() -> pd.DataFrame:
             "college": p.get("college") or "",
             "depth_order": _int_or_none(p.get("depth_chart_order")),
         })
-    return pd.DataFrame(rows).drop_duplicates(subset="key", keep="first")
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    # Two players can share a name and position; the one on a roster wins.
+    df["_signed"] = df["nfl_team"] != ""
+    df = df.sort_values("_signed", ascending=False, kind="stable")
+    return df.drop_duplicates(subset="key", keep="first").drop(columns="_signed")
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def fetch_players() -> pd.DataFrame:
+    """Fantasy-relevant players with ids, injury status, and depth-chart slot."""
+    return parse_players(http.get(f"{API}/players/nfl", timeout=120).json())
 
 
 @st.cache_data(ttl=900, show_spinner=False)

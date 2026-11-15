@@ -156,7 +156,7 @@ def trade_ideas(teams: dict[int, pd.DataFrame], my_id: int,
                 team_names: dict[int, str], top_n: int = 8,
                 include_steals: bool = False) -> list[dict]:
     """Ranked trade ideas: fair 1-for-1s and 2-for-1s, plus (optionally)
-    steals. At most two ideas per opposing team."""
+    steals. At most two fair ideas and one steal per opposing team."""
     if my_id not in teams or len(teams) < 2:
         return []
     needs, weak = league_weakness(teams)
@@ -181,11 +181,13 @@ def trade_ideas(teams: dict[int, pd.DataFrame], my_id: int,
         ideas += found
 
     ideas.sort(key=lambda i: -i["score"])
-    out, per_team = [], {}
+    out, shown = [], {}
     for i in ideas:
-        if per_team.get(i["team"], 0) >= 2:
+        steal = i["kind"] == "steal"
+        slot = (i["team_id"], steal)
+        if shown.get(slot, 0) >= (1 if steal else 2):
             continue
-        per_team[i["team"]] = per_team.get(i["team"], 0) + 1
+        shown[slot] = shown.get(slot, 0) + 1
         out.append(i)
     return out[:top_n]
 

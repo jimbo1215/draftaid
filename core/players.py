@@ -45,14 +45,21 @@ def playoff_ranks(proj: dict, proj_pos: dict, playoff_weeks: list) -> dict:
     return ranks
 
 
-def _sleeper_ids(df: pd.DataFrame, sleeper: pd.DataFrame) -> pd.Series:
-    """Sleeper id for each row: by ESPN id when Sleeper knows it (immune to
-    name spelling), else by normalized name + position."""
-    by_key = sleeper.drop_duplicates("key").set_index("key")["sleeper_id"]
-    ids = df["key"].map(by_key)
-    if "espn_id" in sleeper.columns and "espn_id" in df.columns:
-        known = sleeper.dropna(subset=["espn_id"]).drop_duplicates("espn_id")
-        by_espn = dict(zip(known["espn_id"].astype(int), known["sleeper_id"]))
+def _sleeper_ids(df: pd.DataFrame, src: Sources) -> pd.Series:
+    """Sleeper id for each row. An ESPN-id match wins when one exists (immune
+    to name spelling; both Sleeper and the market feed carry ESPN ids), else
+    normalized name + position."""
+    ids = pd.Series([None] * len(df), index=df.index, dtype=object)
+    by_espn: dict[int, str] = {}
+    if not src.sleeper.empty:
+        ids = df["key"].map(src.sleeper.drop_duplicates("key").set_index("key")["sleeper_id"])
+        if "espn_id" in src.sleeper.columns:
+            known = src.sleeper.dropna(subset=["espn_id"])
+            by_espn.update(zip(known["espn_id"].astype(int), known["sleeper_id"]))
+    if not src.market.empty and "mkt_espn_id" in src.market.columns:
+        known = src.market.dropna(subset=["mkt_espn_id"])
+        by_espn.update(zip(known["mkt_espn_id"].astype(int), known["sleeper_id"]))
+    if by_espn and "espn_id" in df.columns:
         via_espn = df["espn_id"].map(
             lambda v: by_espn.get(int(v)) if v is not None and pd.notna(v) else None)
         ids = via_espn.where(via_espn.notna(), ids)
@@ -79,14 +86,14 @@ def enrich(players: list[dict], src: Sources) -> pd.DataFrame:
     else:
         df["weekly_rank"], df["flex_rank"] = pd.NA, pd.NA
 
+    df["sleeper_id"] = _sleeper_ids(df, src)
     if not src.sleeper.empty:
-        df["sleeper_id"] = _sleeper_ids(df, src.sleeper)
         extra = src.sleeper.drop_duplicates("sleeper_id").set_index("sleeper_id")
         df["injury"] = df["sleeper_id"].map(extra["injury"]).fillna("")
         df["depth_order"] = (df["sleeper_id"].map(extra["depth_order"])
                              if "depth_order" in extra.columns else pd.NA)
     else:
-        df["sleeper_id"], df["injury"], df["depth_order"] = None, "", pd.NA
+        df["injury"], df["depth_order"] = "", pd.NA
     df["injury"] = df.apply(_injury, axis=1)
 
     if src.trending:
@@ -99,7 +106,8 @@ def enrich(players: list[dict], src: Sources) -> pd.DataFrame:
         df["trend_rank"] = pd.NA
 
     if not src.market.empty and df["sleeper_id"].notna().any():
-        df = df.merge(src.market, on="sleeper_id", how="left")
+        values = src.market.drop(columns="mkt_espn_id", errors="ignore")
+        df = df.merge(values, on="sleeper_id", how="left")
     else:
         df["mkt_value"], df["mkt_rank"], df["mkt_trend"] = pd.NA, pd.NA, pd.NA
 
