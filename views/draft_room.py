@@ -13,11 +13,12 @@ from urllib.parse import quote
 import pandas as pd
 import streamlit as st
 
-import draft_logic as dl
-from data_sources import build_board, fetch_player_news, parse_rankings_csv
+from core import draft as dl
+from core.board import build_board, parse_rankings_csv
+from core.news import fetch_player_news
 
-# set_page_config and the shared responsive CSS live in draftaid.py (the
-# navigation entry point); this file runs as the Draft Room page.
+# Page config and the shared CSS live in draftaid.py (the navigation entry
+# point); this file runs as the Draft Room page.
 
 AUTOSAVE = Path(__file__).resolve().parent.parent / "draft_autosave.json"
 POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
@@ -71,8 +72,6 @@ def load_state(payload: dict):
 # ---------------------------------------------------------------- sidebar
 
 with st.sidebar:
-    st.title("🏈 DraftAid")
-
     with st.expander("League setup", expanded=False):
         tc1, tc2 = st.columns(2)
         teams = tc1.number_input("Teams", 4, 20, 12)
@@ -778,7 +777,7 @@ with tab_log:
 
 with tab_full:
     full = board.copy()
-    full["status"] = full["key"].map(status_by_key).fillna("")
+    full["status"] = full["key"].map(lambda k: status_by_key.get(k, ""))
     st.download_button("⬇ Download board as CSV",
                        full.drop(columns=["key", "sleeper_id"], errors="ignore")
                            .to_csv(index=False),

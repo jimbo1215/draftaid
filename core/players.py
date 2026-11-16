@@ -108,8 +108,9 @@ def enrich(players: list[dict], src: Sources) -> pd.DataFrame:
     if not src.market.empty and df["sleeper_id"].notna().any():
         values = src.market.drop(columns="mkt_espn_id", errors="ignore")
         df = df.merge(values, on="sleeper_id", how="left")
-    else:
-        df["mkt_value"], df["mkt_rank"], df["mkt_trend"] = pd.NA, pd.NA, pd.NA
+    for col in ("mkt_value", "mkt_rank", "mkt_pos_rank", "mkt_trend"):
+        if col not in df.columns:   # no market feed, or one missing a field
+            df[col] = pd.NA
 
     # Week-by-week projections: a dict per player, plus the playoff window.
     df["wk"] = df["sleeper_id"].map(lambda s: src.proj.get(s) or {})

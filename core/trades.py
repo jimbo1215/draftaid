@@ -8,7 +8,7 @@ When the sources disagree hard about a player, nothing is proposed.
 import pandas as pd
 
 from core.lineup import DEFAULT_LINEUP, STARTABLE_ROS, positional_needs
-from core.values import player_value, rank_value
+from core.values import player_value, pos_rank_number, rank_value
 
 POSITIONS = ("QB", "RB", "WR", "TE")
 FAIR_1FOR1 = (0.88, 1.18)      # give/get market ratio that both sides can accept
@@ -16,6 +16,8 @@ FAIR_2FOR1 = (1.02, 1.40)      # consolidating two pieces into one costs a premi
 STEAL = (0.45, 0.88)           # tilted the user's way; below 0.45 is an insult
 MAX_ECR_OVERPAY_1FOR1 = 1.25   # never overpay on the expert scale either
 MAX_ECR_OVERPAY_2FOR1 = 1.45
+MOVER_GAP = {"QB": 4, "TE": 4, "RB": 6, "WR": 6}          # positional spots apart
+MOVER_STARTABLE = {"QB": 15, "TE": 15, "RB": 40, "WR": 40}  # worth trading for
 
 
 def _ranked(df: pd.DataFrame, pos: str) -> pd.DataFrame:
@@ -196,26 +198,33 @@ def market_movers(teams: dict[int, pd.DataFrame], my_id: int,
                   team_names: dict[int, str], top_n: int = 4) -> dict:
     """Where the trade market and the experts disagree, with momentum.
 
-    sell: your players the market prices above the experts' rank while their
-          value is still climbing (cash out before it corrects).
-    buy:  rivals' players the experts rank above a falling market price
-          (their manager may sell low)."""
+    Ranks are compared within position: overall ranks would flag every
+    quarterback, because a 1-QB market always discounts them.
+
+    sell: your players the market ranks above the experts at their position
+          while their value is still climbing (cash out before it corrects).
+    buy:  rivals' startable players the experts rank above a falling market
+          price (their manager may sell low)."""
     sell, buy = [], []
     for tid, df in teams.items():
-        if df.empty or "mkt_rank" not in df.columns:
+        if df.empty or "mkt_pos_rank" not in df.columns:
             continue
-        rated = df[df["mkt_rank"].notna() & df["ros_rank"].notna()
-                   & df["pos"].isin(POSITIONS)]
+        rated = df[df["mkt_pos_rank"].notna() & df["pos"].isin(POSITIONS)]
         for _, p in rated.iterrows():
-            gap = float(p["ros_rank"]) - float(p["mkt_rank"])   # + = market likes him more
+            expert = pos_rank_number(p.get("ros_pos_rank"))
+            if expert is None:
+                continue
+            gap = expert - int(p["mkt_pos_rank"])        # + = the market likes him more
+            need = MOVER_GAP[p["pos"]]
             trend = float(p["mkt_trend"]) if pd.notna(p.get("mkt_trend")) else 0.0
-            if tid == my_id and gap >= 10 and trend > 0:
+            if tid == my_id and gap >= need and trend > 0:
                 sell.append({"player": p, "gap": gap, "trend": trend,
-                             "score": gap + trend / 40})
-            elif tid != my_id and gap <= -10 and trend < 0 and p["ros_rank"] <= 110:
+                             "score": gap / need + trend / 400})
+            elif (tid != my_id and gap <= -need and trend < 0
+                  and expert <= MOVER_STARTABLE[p["pos"]]):
                 buy.append({"player": p, "gap": -gap, "trend": trend,
                             "team": team_names.get(tid, f"Team {tid}"), "team_id": tid,
-                            "score": -gap - trend / 40})
+                            "score": -gap / need - trend / 400})
     sell.sort(key=lambda x: -x["score"])
     buy.sort(key=lambda x: -x["score"])
     return {"sell": sell[:top_n], "buy": buy[:top_n]}

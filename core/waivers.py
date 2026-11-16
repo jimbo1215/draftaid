@@ -6,6 +6,10 @@ from core.lineup import DEFAULT_LINEUP, as_players, best_lineup, holding, week_p
 from core.names import FLEX_POSITIONS
 
 
+# Playoff positional rank worth calling out: a real starter at the position.
+PLAYOFF_STARTER = {"QB": 10, "TE": 10, "K": 6, "DST": 6}
+
+
 def _bid_pct(ros_gain: float) -> float:
     """Share of the interested rivals' budgets a ROS lineup gain is worth.
     Convex: a lineup-changing starter (gain ~40) ~55%, a solid upgrade
@@ -141,7 +145,7 @@ def waiver_targets(fas: pd.DataFrame, my_roster: pd.DataFrame, league: dict,
         if best["starts_wk"] and best["wk_gain"] >= 1:
             why.append(f"+{best['wk_gain']:.1f} projected points in your lineup this week")
         po = fa.get("po_rank")
-        if po is not None and pd.notna(po) and po <= {"QB": 12, "TE": 12}.get(cand["pos"], 24):
+        if po is not None and pd.notna(po) and po <= PLAYOFF_STARTER.get(cand["pos"], 24):
             why.append(f"{cand['pos']}{int(po)} by projection for the fantasy playoffs")
         if pd.notna(trend) and trend <= 25:
             why.append(f"#{int(trend)} most-added on Sleeper today")

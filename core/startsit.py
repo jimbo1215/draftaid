@@ -13,7 +13,8 @@ def _week_rank(r):
     return r.get("flex_rank") if r["pos"] in FLEX_POSITIONS else r.get("weekly_rank")
 
 
-def start_sit(my_roster: pd.DataFrame, lineup: dict | None = None) -> list[dict]:
+def start_sit(my_roster: pd.DataFrame, lineup: dict | None = None,
+              week: int | None = None) -> list[dict]:
     """Bench players the experts rank above a starter they could replace.
 
     Builds the best lineup from this week's FantasyPros ranks and flags only
@@ -56,7 +57,10 @@ def start_sit(my_roster: pd.DataFrame, lineup: dict | None = None) -> list[dict]
     for _, r in active[active["starter"]].iterrows():
         rank = _week_rank(r)
         if (rank is None or pd.isna(rank)) and r["pos"] in ("QB", "RB", "WR", "TE"):
-            flags.append({"in": None, "out": r, "note": "not ranked this week (bye or out?)"})
+            on_bye = week is not None and r.get("bye") == week
+            flags.append({"in": None, "out": r,
+                          "note": "on bye this week" if on_bye
+                          else "not ranked this week (ruled out?)"})
     return flags
 
 

@@ -85,13 +85,17 @@ def test_no_ideas_when_nothing_would_improve_the_lineup():
     assert trade_ideas({8: t[8]}, 8, NAMES) == []             # nobody to trade with
 
 
-def test_market_movers_split_into_sell_high_and_buy_low():
+def test_market_movers_compare_ranks_within_position():
     t = teams()
-    t[8].loc[t[8]["player"] == "My WR4", ["mkt_rank", "mkt_trend"]] = [20, 300.0]
-    t[8].loc[t[8]["player"] == "My WR5", ["mkt_rank", "mkt_trend"]] = [40, -50.0]   # falling
-    t[3].loc[t[3]["player"] == "S RB3", ["mkt_rank", "mkt_trend"]] = [55, -200.0]
-    t[5].loc[t[5]["player"] == "A RB1", ["mkt_rank", "mkt_trend"]] = [31, -400.0]   # no gap
+    cols = ["mkt_pos_rank", "mkt_trend"]
+    t[8].loc[t[8]["player"] == "My WR4", cols] = [20, 300.0]      # market WR20 vs experts WR45
+    t[8].loc[t[8]["player"] == "My WR5", cols] = [40, -50.0]      # gap, but already falling
+    t[3].loc[t[3]["player"] == "S RB3", cols] = [55, -200.0]      # experts RB28, market RB55
+    t[3].loc[t[3]["player"] == "S WR2", cols] = [190, -200.0]     # gap, but not startable
+    t[5].loc[t[5]["player"] == "A RB1", cols] = [31, -400.0]      # no real gap
+    t[5].loc[t[5]["player"] == "A QB", cols] = [24, -90.0]        # QB22 vs QB24: within noise
     movers = market_movers(t, 8, NAMES)
     assert [m["player"]["player"] for m in movers["sell"]] == ["My WR4"]
     assert [(m["player"]["player"], m["team"]) for m in movers["buy"]] == [("S RB3", "Scab")]
     assert movers["sell"][0]["gap"] == 25 and movers["buy"][0]["gap"] == 27
+    assert market_movers({8: t[8].drop(columns="mkt_pos_rank")}, 8, NAMES) == {"sell": [], "buy": []}

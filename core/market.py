@@ -24,11 +24,12 @@ def parse_values(items: list) -> pd.DataFrame:
                      "mkt_espn_id": espn_id,
                      "mkt_value": float(item.get("value") or 0),
                      "mkt_rank": item.get("overallRank"),
+                     "mkt_pos_rank": item.get("positionRank"),
                      # 30-day change in market value: who the market is buying/selling.
                      "mkt_trend": float(item.get("trend30Day") or 0)})
     if not rows:
         return pd.DataFrame(columns=["sleeper_id", "mkt_espn_id", "mkt_value", "mkt_rank",
-                                     "mkt_trend"])
+                                     "mkt_pos_rank", "mkt_trend"])
     return pd.DataFrame(rows).drop_duplicates("sleeper_id")
 
 

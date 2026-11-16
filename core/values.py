@@ -1,6 +1,7 @@
 """Player value scales shared by the lineup, waiver, and trade models."""
 
 import math
+import re
 
 import pandas as pd
 
@@ -20,3 +21,9 @@ def player_value(p) -> float:
     if mv is not None and pd.notna(mv):
         return float(mv) / 90.0  # top of market (~10,700) ≈ curve top (~118)
     return rank_value(p.get("ros_rank"))
+
+
+def pos_rank_number(label) -> int | None:
+    """"RB12" -> 12; None when there is no positional rank."""
+    m = re.search(r"(\d+)$", str(label or ""))
+    return int(m.group(1)) if m else None

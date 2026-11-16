@@ -1,29 +1,26 @@
+# Fonts and shape are fixed here. Colors below are the default theme
+# ("Midnight"); ui/theme.py re-points them at runtime when another theme is
+# chosen in Settings, so keep these values in sync with THEMES["midnight"].
 [theme]
 base = "dark"
-primaryColor = "#C5F82A"
-backgroundColor = "#0A0C0F"
-secondaryBackgroundColor = "#14181E"
-textColor = "#E6E9EE"
-linkColor = "#C5F82A"
-borderColor = "#232932"
+primaryColor = "#2672CE"
+backgroundColor = "#0E1217"
+secondaryBackgroundColor = "#1B212A"
+textColor = "#E8EBF0"
+linkColor = "#6DA7EC"
+borderColor = "#303947"
 showWidgetBorder = true
 baseRadius = "8px"
 buttonRadius = "8px"
 baseFontSize = 15
-font = "'IBM Plex Sans':https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
-headingFont = "'Barlow Condensed':https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&display=swap"
-codeFont = "'IBM Plex Mono':https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+font = "'Inter':https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+headingFont = "'Inter':https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
 headingFontWeights = [700, 700, 600, 600, 600, 600]
-greenColor = "#2FD6A3"
-redColor = "#FF5D5D"
-yellowColor = "#FFC34D"
-blueColor = "#5AB0FF"
-chartCategoricalColors = ["#C5F82A", "#5AB0FF", "#FF6B8B", "#2FD6A3", "#FFA94D", "#B69CFF"]
 
 [theme.sidebar]
-backgroundColor = "#0D1014"
-secondaryBackgroundColor = "#14181E"
-borderColor = "#1C2129"
+backgroundColor = "#0B0E13"
+secondaryBackgroundColor = "#1B212A"
+borderColor = "#232A34"
 
 [client]
 toolbarMode = "minimal"

@@ -102,6 +102,9 @@ def test_start_sit_flags_unranked_starters():
     flags = start_sit(roster, LINEUP)
     empties = [f for f in flags if f["in"] is None]
     assert [f["out"]["player"] for f in empties] == ["Ron Two"]
+    assert empties[0]["note"] == "not ranked this week (ruled out?)"
+    roster.loc[roster["player"] == "Ron Two", "bye"] = 10
+    assert start_sit(roster, LINEUP, week=10)[-1]["note"] == "on bye this week"
 
 
 def test_bench_points_measures_what_is_left_on_the_bench():

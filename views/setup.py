@@ -1,17 +1,18 @@
-"""League Setup: connect the app to your ESPN league."""
+"""Settings: connect the app to your ESPN league, and pick how it looks."""
 
 import streamlit as st
 
-import theme as t
-from espn_league import get_league, load_config, save_config
+from core.espn import get_league, load_config, save_config, save_pref
+from ui import theme as t
 
-t.page_header("League Setup", ["Settings"],
+t.page_header("Settings", ["DraftAid"],
               sub="Connect DraftAid to your ESPN league. Credentials stay on this app's "
                   "server (league_config.json, never committed to git) and are only ever "
                   "sent to ESPN.")
 
 cfg = load_config()
 
+t.section("League connection")
 with st.form("espn_connect", border=True):
     league_id = st.text_input("ESPN league ID", value=str(cfg.get("league_id", "")),
                               help="The number after leagueId= in your league's URL")
@@ -33,6 +34,7 @@ if submitted:
                    "espn_s2": espn_s2.strip(), "swid": swid.strip()}
         save_config(new_cfg)
         st.cache_data.clear()
+        st.session_state.pop("_ctx", None)
         try:
             league = get_league(new_cfg)
             t.alert("good", "Connected",
@@ -63,6 +65,27 @@ if cfg.get("league_id"):
     except Exception:
         pass
 
+# --- appearance
+t.section("Appearance", "applies everywhere, instantly")
+active = t.current()
+cols = st.columns(len(t.THEMES), gap="small")
+for col, th in zip(cols, t.THEMES.values()):
+    with col:
+        t.html(f"<div class='da-swatch' title='{t.esc(th.label)}'>"
+               f"<i style='background:{th.bg}'></i><i style='background:{th.s1}'></i>"
+               f"<i style='background:{th.s3}'></i><i style='background:{th.mark}'></i>"
+               f"<i style='background:{th.text}'></i></div>")
+        chosen = th.key == active.key
+        if st.button(th.label, key=f"theme_{th.key}", width="stretch",
+                     type="primary" if chosen else "secondary",
+                     icon=":material/check:" if chosen else None, help=th.blurb):
+            t.choose(th.key)
+            save_pref("theme", th.key)
+            st.rerun()
+st.caption("Your choice is saved with the league settings. On Streamlit Community Cloud "
+           "that file resets when the app restarts; add `theme = \"daylight\"` (or "
+           "`\"dusk\"`) under `[espn]` in the app's Secrets to make it permanent.")
+
 t.section("Help")
 with st.expander("How to find your league ID and cookies"):
     st.markdown("""
@@ -73,8 +96,8 @@ with st.expander("How to find your league ID and cookies"):
 nothing more):
 
 *On a computer:* log in at espn.com → press F12 (DevTools) → **Application**
-tab → **Cookies** → `https://www.espn.com` → copy the values of `espn_s2`
-(very long) and `SWID` (like `{ABC...}`).
+tab (**Storage** in Firefox) → **Cookies** → `https://www.espn.com` → copy the
+values of `espn_s2` (very long) and `SWID` (like `{ABC...}`).
 
 *On your phone:* easiest is to do the above once on any computer. The cookies
 last for months. Paste them here and you're set.
