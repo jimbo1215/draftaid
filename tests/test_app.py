@@ -256,3 +256,81 @@ def test_draft_room_logs_and_undoes_a_pick(offline, monkeypatch):
     at.button(key="btn_undo").click()
     at.run()
     assert at.session_state.picks == []
+
+
+# ------------------------------------------------------------------ late-season states
+
+def _playoff_league() -> dict:
+    """The same league in week 16: semifinals final, title game under way,
+    trade deadline long gone."""
+    raw = _raw_league()
+    raw["scoringPeriodId"] = 16
+    raw["status"] = {"currentMatchupPeriod": 16}
+    raw["settings"]["scheduleSettings"]["playoffTeamCount"] = 4
+    raw["settings"]["tradeSettings"]["deadlineDate"] = 1000
+    for m in raw["schedule"]:
+        if m["winner"] == "UNDECIDED":
+            m["winner"] = "HOME"
+            m["home"]["totalPoints"], m["away"]["totalPoints"] = 110.0, 90.0
+    for t in raw["teams"]:
+        t["playoffSeed"] = t["id"]
+    bracket = {"playoffTierType": "WINNERS_BRACKET"}
+    raw["schedule"] += [
+        {**bracket, "matchupPeriodId": 15, "winner": "HOME",
+         "home": {"teamId": 1, "totalPoints": 120.0}, "away": {"teamId": 4, "totalPoints": 80.0}},
+        {**bracket, "matchupPeriodId": 15, "winner": "AWAY",
+         "home": {"teamId": 2, "totalPoints": 95.0}, "away": {"teamId": 3, "totalPoints": 99.0}},
+        {**bracket, "matchupPeriodId": 16, "winner": "UNDECIDED",
+         "home": {"teamId": 1, "totalPoints": 0.0, "totalPointsLive": 40.0,
+                  "totalProjectedPointsLive": 105.0},
+         "away": {"teamId": 3, "totalPoints": 0.0, "totalPointsLive": 52.0,
+                  "totalProjectedPointsLive": 101.0}},
+        {"playoffTierType": "WINNERS_BRACKET", "matchupPeriodId": 17, "home": {"teamId": 1}},
+    ]
+    return raw
+
+
+def test_every_page_works_during_the_playoffs(offline, monkeypatch):
+    monkeypatch.setattr(espn, "fetch_league_raw", lambda *a, **k: _playoff_league())
+    at = _run()                                   # my team (2) lost its semifinal
+    assert not at.exception, at.exception
+    for page in SEASON_PAGES:
+        at.switch_page(page)
+        at.run()
+        assert not at.exception, (page, at.exception)
+        if page == "views/trades.py":
+            assert "deadline has passed" in _text(at)
+
+    monkeypatch.setattr(espn, "load_config", lambda: {**offline, "my_team_id": 1})
+    at = _run()                                   # a finalist, title game in progress
+    assert not at.exception, at.exception
+    assert "Projected final" in _text(at)
+    at.switch_page("views/playoffs.py")
+    at.run()
+    assert not at.exception, at.exception
+
+
+def test_playoff_odds_only_go_to_teams_still_alive(offline):
+    league = espn.parse_league(_playoff_league())
+    model = sim.Model(tids=[1, 2, 3, 4], weeks=[16, 17],
+                      mu=__import__("numpy").full((4, 2), 100.0))
+    out = sim.simulate(league, model, n=2000, my_id=1)
+    assert out.title[2] == 0.0 and out.title[4] == 0.0
+    assert out.title[1] + out.title[3] == pytest.approx(1)
+    assert out.title[1] > out.title[3]             # ahead on the live projection
+    assert out.playoff == {1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0}
+
+
+def test_waiver_priority_league_has_no_dollar_bids(offline, monkeypatch):
+    raw = _raw_league()
+    raw["settings"]["acquisitionSettings"] = {"isUsingAcquisitionBudget": False}
+    monkeypatch.setattr(espn, "fetch_league_raw", lambda *a, **k: raw)
+    at = _run()
+    assert not at.exception and "FAAB left" not in _text(at)
+    at.switch_page("views/waivers.py")
+    at.run()
+    assert not at.exception, at.exception
+    assert "Priority" in _text(at) and "Your FAAB" not in _text(at)
+    at.switch_page("views/league.py")
+    at.run()
+    assert not at.exception, at.exception
